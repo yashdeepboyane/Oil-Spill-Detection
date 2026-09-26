@@ -44,6 +44,34 @@ The 6-stage detection pipeline implemented in `engine.py` includes:
 
 ---
 
+## 🛰️ Satellite & Aerial Image Requirements
+
+To ensure accurate computer vision segmentation and prevent invalid image rejections, uploaded imagery should follow these guidelines:
+
+### ✅ What Should Be Present in the Image
+* **Marine Water Surface:** Open ocean, sea, bay, or coastal water background with natural surface wave clutter.
+* **Sensor Types:**
+  - **Synthetic Aperture Radar (SAR):** Sentinel-1 C-band, RADARSAT-2, TerraSAR-X, ALOS PALSAR.
+  - **Optical / Aerial:** High-resolution multispectral satellite (Sentinel-2, Landsat) or drone sea surface photography.
+* **Key Visual Signatures:**
+  - **Oil Slicks / Sheen:** Low-backscatter dark patches, filaments, or irregular plumes where oil dampens capillary surface waves.
+  - **Vessel Bilge Trails:** Trailing linear dark discharge streaks aligned with vessel trajectories.
+  - **Vessels / Rigs (Optional):** Bright point radar reflectors (metallic hulls/platforms).
+
+### ❌ What Will Be Rejected (Flagged as Invalid Scene)
+* **Non-Marine Photos:** Indoor environments, human faces/portraits, animals, urban street photography.
+* **Documents & Screenshots:** Text pages, scanned papers, source code, UI mockups, or line diagrams.
+* **Solid / Blank Images:** Completely black, white, or zero-variance corrupt images.
+* **Land-Only Terrain:** Forests, mountains, or urban areas without sea water bodies.
+
+### 📐 Technical Specifications
+* **Supported Formats:** `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`
+* **Resolution Range:** Min 50×50 px (Recommended: 500×500 to 4000×4000 px)
+* **Max File Size:** 50 MB
+* **Default Ground Sampling Distance (GSD):** 10.0 meters/pixel (adjustable in API)
+
+---
+
 ## 📡 API Endpoints
 
 ### 1. `POST /api/detect`

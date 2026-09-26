@@ -3,6 +3,7 @@
  * Fully connects the in-page React UI and the AI Studio to the Python FastAPI + OpenCV backend.
  * Dynamically updates all detection results, area calculations, confidence scores,
  * analyst notes, and inspection overlays on every upload.
+ * Provides clear image requirements and guidelines for optimal detection.
  */
 
 (function () {
@@ -52,8 +53,69 @@
     document.body.appendChild(pill);
   }
 
+  // Inject in-page instructions and guidelines card onto the /detection page
+  function injectInPageGuidelines() {
+    const fileInput = document.querySelector('input[type="file"]');
+    if (!fileInput) return;
+    const uploadCard = fileInput.closest(".rounded-2xl");
+    if (!uploadCard || !uploadCard.parentElement) return;
+
+    if (document.getElementById("og-image-guidelines")) return;
+
+    const guide = document.createElement("div");
+    guide.id = "og-image-guidelines";
+    guide.className = "mb-6 rounded-2xl border border-sky-200 bg-sky-50/70 p-5 text-slate-800 shadow-sm";
+    guide.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="display:flex;width:22px;height:22px;border-radius:50%;background:#0284c7;color:white;font-size:11px;font-weight:800;align-items:center;justify-content:center;">i</span>
+          <h3 style="margin:0;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;color:#0c4a6e;">Satellite & Drone Image Requirements</h3>
+        </div>
+        <span style="background:#e0f2fe;color:#0369a1;padding:3px 8px;border-radius:6px;font-family:monospace;font-size:10px;font-weight:700;">SAR & Optical Remote Sensing</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:12px;">
+        <!-- What Should Be Present -->
+        <div style="background:white;border:1px solid #bae6fd;border-radius:12px;padding:12px 14px;">
+          <div style="font-weight:800;font-size:11px;color:#047857;display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <span>✅ What Should Be Present in the Image</span>
+          </div>
+          <ul style="margin:0;padding-left:16px;font-size:11px;line-height:1.6;color:#334155;">
+            <li><b>Marine Water Surface:</b> Open sea, ocean, bay, or coastal waterway background.</li>
+            <li><b>Satellite SAR / Aerial Sensors:</b> Radar backscatter (Sentinel-1, RADARSAT, TerraSAR-X) or aerial sea surface photography.</li>
+            <li><b>Oil Slicks (if present):</b> Low-backscatter dark damping patches, sheen, or trailing bilge streaks where oil dampens surface capillary waves.</li>
+            <li><b>Vessels / Rigs:</b> Bright point radar reflectors or wakes (helpful for correlation).</li>
+          </ul>
+        </div>
+
+        <!-- What to Avoid -->
+        <div style="background:white;border:1px solid #bae6fd;border-radius:12px;padding:12px 14px;">
+          <div style="font-weight:800;font-size:11px;color:#be123c;display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <span>❌ What NOT to Upload (Will Be Flagged Invalid)</span>
+          </div>
+          <ul style="margin:0;padding-left:16px;font-size:11px;line-height:1.6;color:#334155;">
+            <li><b>Non-Marine Photos:</b> Indoor scenes, human portraits, faces, animals, or city street photos.</li>
+            <li><b>Documents & Screenshots:</b> Text pages, paper scans, code, or user interface diagrams.</li>
+            <li><b>Solid / Corrupted Files:</b> Solid black, pure white, or zero-variance images.</li>
+            <li><b>Land-Only Terrain:</b> Forests, mountains, or deserts with no visible ocean water.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(186,230,253,0.7);display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;font-family:monospace;font-size:10px;color:#0369a1;">
+        <span><b>Supported Formats:</b> .png, .jpg, .jpeg, .tif, .tiff</span>
+        <span><b>Recommended Res:</b> 500×500 to 4000×4000 px</span>
+        <span><b>Max Size:</b> 50 MB</span>
+      </div>
+    `;
+
+    uploadCard.parentElement.insertBefore(guide, uploadCard);
+  }
+
   // Hook into in-page elements on the /detection page
   function attachInPageDetectionHandlers() {
+    injectInPageGuidelines();
+
     // Find all file inputs on the page
     const fileInputs = document.querySelectorAll('input[type="file"]');
     fileInputs.forEach((input) => {
@@ -83,7 +145,6 @@
       } else if (text === "run detection") {
         btn.dataset.ogBound = "true";
         btn.addEventListener("click", async (e) => {
-          // If a file is selected, re-run, otherwise open studio
           const fileInput = document.querySelector('input[type="file"]');
           if (fileInput?.files?.[0]) {
             e.preventDefault();
@@ -144,7 +205,6 @@
   }
 
   function setInPageLoading(loading, message = "Analyzing...") {
-    // Find the pipeline percentage or status text
     const statusTitles = document.querySelectorAll("h2");
     statusTitles.forEach((h2) => {
       if (h2.textContent?.includes("Live detection experience") || h2.textContent?.includes("Pipeline status")) {
@@ -161,10 +221,15 @@
   function updateInPageDetectionResults(filename, data) {
     console.log("Updating in-page detection view with real data:", data);
 
-    // 1. Locate the Result Package card
     let resultHeader = null;
     document.querySelectorAll("h2").forEach((h2) => {
-      if (h2.textContent?.includes("OS-2026-") || h2.textContent?.includes("possible oil") || h2.textContent?.includes("Clean Water") || h2.textContent?.includes("Invalid Image")) {
+      if (
+        h2.textContent?.includes("OS-2026-") ||
+        h2.textContent?.includes("possible oil") ||
+        h2.textContent?.includes("Clean Water") ||
+        h2.textContent?.includes("Invalid Image") ||
+        h2.textContent?.includes("Invalid Scene")
+      ) {
         resultHeader = h2;
       }
     });
@@ -176,20 +241,14 @@
         resultHeader.style.color = "#f43f5e";
       }
 
-      // Update badge
       const badge = resultHeader?.parentElement?.parentElement?.querySelector("span");
       if (badge) {
         badge.textContent = "Invalid Image";
         badge.className = "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase bg-red-100 text-red-700";
       }
 
-      // Update 4 metric cards
       updateMetricCards("N/A", "0%", "Failed", "Invalid Scene");
-
-      // Update Analyst Note
       updateAnalystNote(data.analyst_note || "The uploaded file does not match marine satellite or sea surface radar characteristics. Please upload SAR (.tif, .png) or sea surface imagery.", "red");
-
-      // Remove/update inspection panel
       renderInPageVisuals(data, false);
       return;
     }
@@ -205,7 +264,6 @@
       }
     }
 
-    // Update badge
     const badge = resultHeader?.parentElement?.parentElement?.querySelector("span");
     if (badge) {
       if (data.spill_detected) {
@@ -217,18 +275,13 @@
       }
     }
 
-    // Update 4 metric cards with REAL dynamic data
     const areaStr = data.spill_detected ? `${data.total_area_km2} km²` : "0.00 km²";
     const confStr = `${data.overall_confidence}%`;
     const timeStr = data.detection_time_utc || new Date().toISOString().slice(11, 16) + " UTC";
     const riskStr = data.severity;
 
     updateMetricCards(areaStr, confStr, timeStr, riskStr);
-
-    // Update Analyst Note with REAL dynamic text
     updateAnalystNote(data.analyst_note, data.severity_tone);
-
-    // Render / Update In-Page Visual Inspection Panel
     renderInPageVisuals(data, true);
   }
 
@@ -277,7 +330,6 @@
   function renderInPageVisuals(data, isValid) {
     let container = document.getElementById("og-inpage-visuals");
     if (!container) {
-      // Find the parent grid containing the Result Package and Analyst note
       const analystNote = document.querySelector("h2")?.closest(".grid");
       if (!analystNote || !analystNote.parentElement) return;
 
@@ -298,17 +350,16 @@
             ${data.error_message || "The uploaded image is not a valid marine ocean surface or satellite radar scene."}
           </p>
           <div style="margin-top: 12px; font-size: 11px; color: #881337; background: white; padding: 10px 14px; border-radius: 8px; border: 1px dashed #fda4af;">
-            <b>Supported Data:</b> Sentinel-1 SAR, RADARSAT, TerraSAR-X, or aerial sea surface photography in .png, .jpg, or .tif formats.
+            <b>Required Format:</b> Sentinel-1 SAR, RADARSAT, TerraSAR-X, or aerial sea surface photography in .png, .jpg, or .tif formats.
           </div>
         </div>
       `;
       return;
     }
 
-    // Valid visuals
     container.innerHTML = `
       <div style="background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 20px; box-shadow: 0 4px 20px -4px rgba(0,0,0,0.05);">
-        <div style="display:flex;align-items:center;justify-content:between;margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
           <div>
             <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:#0284c7;">Computer Vision Evidence</span>
             <h3 style="margin:2px 0 0 0;font-size:15px;font-weight:800;color:#0f172a;">Live Pixel-Level Segmentation & Radar Attenuation</h3>
@@ -343,7 +394,6 @@
           </div>
         </div>
 
-        <!-- Slicks Details Table -->
         ${
           data.slicks && data.slicks.length > 0
             ? `
@@ -439,6 +489,15 @@
 
           <!-- Body -->
           <div style="padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+            <!-- Guidelines Bar inside Modal -->
+            <div style="background: rgba(56,189,248,0.06); border: 1px solid rgba(56,189,248,0.2); border-radius: 12px; padding: 12px 16px; font-size: 11px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#38bdf8;font-weight:800;">ℹ️ Input Guide:</span>
+                <span style="color:#cbd5e1;">Upload satellite Synthetic Aperture Radar (SAR) or aerial ocean imagery showing water surfaces.</span>
+              </div>
+              <span style="color:#94a3b8;font-family:monospace;font-size:10px;">.png, .jpg, .tif (max 50 MB)</span>
+            </div>
+
             <!-- Controls / Scenario Selection -->
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
               <button class="og-scene-btn" data-scene="tanker_spill" style="padding: 12px 14px; background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.25); border-radius: 12px; color: white; cursor: pointer; text-align: left; transition: all 0.2s;">
@@ -575,7 +634,6 @@
         if (file) {
           document.getElementById("og-file-name").textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
           uploadAndDetectStudio(file);
-          // Also update in-page
           processInPageUpload(file);
         }
       };
