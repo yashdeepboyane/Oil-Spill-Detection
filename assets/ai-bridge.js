@@ -3,7 +3,8 @@
  * Fully connects the in-page React UI and the AI Studio to the Python FastAPI + OpenCV backend.
  * Dynamically updates all detection results, area calculations, confidence scores,
  * analyst notes, and inspection overlays on every upload.
- * Provides clear image requirements and guidelines for optimal detection.
+ * Provides clear image requirements and guidelines for optimal detection,
+ * and includes a dedicated Delete / Remove button to clear uploaded images.
  */
 
 (function () {
@@ -112,6 +113,139 @@
     uploadCard.parentElement.insertBefore(guide, uploadCard);
   }
 
+  // Inject a status bar with a "Delete / Remove Image" button below the file input
+  function injectFileStatusBar(fileName, fileSizeKb) {
+    const fileInput = document.querySelector('input[type="file"]');
+    if (!fileInput) return;
+    const uploadLabel = fileInput.closest("label");
+    if (!uploadLabel || !uploadLabel.parentElement) return;
+
+    let statusBar = document.getElementById("og-file-status-bar");
+    if (!statusBar) {
+      statusBar = document.createElement("div");
+      statusBar.id = "og-file-status-bar";
+      statusBar.style.cssText = `
+        margin-top: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        padding: 10px 14px;
+        box-shadow: 0 2px 8px -2px rgba(0,0,0,0.05);
+      `;
+      uploadLabel.parentElement.insertBefore(statusBar, uploadLabel.nextElementSibling);
+    }
+
+    statusBar.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+        <span style="font-size:18px;">🛰️</span>
+        <div style="min-width:0;">
+          <div style="font-size:12px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            ${fileName}
+          </div>
+          <div style="font-size:10px;font-family:monospace;color:#64748b;">
+            ${fileSizeKb > 0 ? `${fileSizeKb.toFixed(1)} KB · Active Scene` : "Built-in Satellite Scenario"}
+          </div>
+        </div>
+      </div>
+      <button id="og-remove-inpage-file" style="
+        background: #fee2e2;
+        border: 1px solid #fca5a5;
+        color: #b91c1c;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 6px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.2s ease;
+        white-space: nowrap;
+      ">
+        <span>🗑️</span>
+        <span>Delete Image</span>
+      </button>
+    `;
+
+    // Attach click handler to Delete button
+    document.getElementById("og-remove-inpage-file").onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      clearUploadedImage();
+    };
+  }
+
+  // Clear/Reset the uploaded image and restore initial standby state
+  function clearUploadedImage() {
+    console.log("Clearing uploaded image...");
+
+    // 1. Clear file input value
+    const fileInputs = document.querySelectorAll('input[type="file"]');
+    fileInputs.forEach((input) => {
+      input.value = "";
+    });
+
+    // 2. Remove in-page status bar
+    const statusBar = document.getElementById("og-file-status-bar");
+    if (statusBar) statusBar.remove();
+
+    // 3. Reset in-page label dropzone text
+    const dropzoneTexts = document.querySelectorAll("label div");
+    dropzoneTexts.forEach((div) => {
+      if (div.textContent?.includes(".png") || div.textContent?.includes(".jpg") || div.textContent?.includes(".tif") || div.textContent?.includes("Scenario")) {
+        div.textContent = "Drop a scene or browse locally";
+      }
+    });
+
+    // 4. Reset Result Package Header & Badge
+    let resultHeader = null;
+    document.querySelectorAll("h2").forEach((h2) => {
+      if (
+        h2.textContent?.includes("OS-2026-") ||
+        h2.textContent?.includes("possible oil") ||
+        h2.textContent?.includes("Clean Water") ||
+        h2.textContent?.includes("Invalid Image") ||
+        h2.textContent?.includes("Invalid Scene") ||
+        h2.textContent?.includes("·")
+      ) {
+        resultHeader = h2;
+      }
+    });
+
+    if (resultHeader) {
+      resultHeader.textContent = "No image selected · Standby";
+      resultHeader.style.color = "#475569";
+
+      const badge = resultHeader?.parentElement?.parentElement?.querySelector("span");
+      if (badge) {
+        badge.textContent = "Waiting for Upload";
+        badge.className = "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase bg-slate-100 text-slate-600";
+      }
+    }
+
+    // 5. Reset Metric Cards
+    updateMetricCards("0.00 km²", "0%", "Standby", "None");
+
+    // 6. Reset Analyst Note
+    updateAnalystNote(
+      "Upload a satellite Synthetic Aperture Radar (SAR) or aerial drone ocean image above to execute the real-time computer vision oil spill detection pipeline.",
+      "blue"
+    );
+
+    // 7. Remove in-page visual evidence panel
+    const visuals = document.getElementById("og-inpage-visuals");
+    if (visuals) visuals.remove();
+
+    // 8. Reset Modal elements if open
+    const modalFileName = document.getElementById("og-file-name");
+    if (modalFileName) modalFileName.textContent = "or select a scenario above";
+    const modalRemoveBtn = document.getElementById("og-remove-modal-file-btn");
+    if (modalRemoveBtn) modalRemoveBtn.style.display = "none";
+  }
+
   // Hook into in-page elements on the /detection page
   function attachInPageDetectionHandlers() {
     injectInPageGuidelines();
@@ -125,6 +259,7 @@
       input.addEventListener("change", async (e) => {
         const file = e.target.files?.[0];
         if (file) {
+          injectFileStatusBar(file.name, file.size / 1024);
           await processInPageUpload(file);
         }
       });
@@ -140,6 +275,7 @@
         btn.addEventListener("click", async (e) => {
           e.preventDefault();
           e.stopPropagation();
+          injectFileStatusBar("OS-2026-014 Tanker Plume (Sentinel-1 C-SAR)", 0);
           await runInPageScenario("tanker_spill");
         });
       } else if (text === "run detection") {
@@ -149,6 +285,7 @@
           if (fileInput?.files?.[0]) {
             e.preventDefault();
             e.stopPropagation();
+            injectFileStatusBar(fileInput.files[0].name, fileInput.files[0].size / 1024);
             await processInPageUpload(fileInput.files[0]);
           } else {
             openAiStudioModal();
@@ -228,7 +365,9 @@
         h2.textContent?.includes("possible oil") ||
         h2.textContent?.includes("Clean Water") ||
         h2.textContent?.includes("Invalid Image") ||
-        h2.textContent?.includes("Invalid Scene")
+        h2.textContent?.includes("Invalid Scene") ||
+        h2.textContent?.includes("Standby") ||
+        h2.textContent?.includes("·")
       ) {
         resultHeader = h2;
       }
@@ -530,6 +669,7 @@
                   <input type="file" id="og-file-input" accept=".tif,.tiff,.png,.jpg,.jpeg" style="display:none;" />
                 </label>
                 <span id="og-file-name" style="font-size: 12px; color: #94a3b8;">or select a scenario above</span>
+                <button id="og-remove-modal-file-btn" style="display:none;background:rgba(244,63,94,0.15);border:1px solid rgba(244,63,94,0.3);color:#f43f5e;font-size:11px;font-weight:700;padding:4px 8px;border-radius:6px;cursor:pointer;">✕ Remove Image</button>
               </div>
               <div style="display:flex;align-items:center;gap:16px;">
                 <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:#94a3b8;">
@@ -616,6 +756,14 @@
         if (e.target === modal) modal.style.display = "none";
       };
 
+      // Modal Remove file button
+      const modalRemoveBtn = document.getElementById("og-remove-modal-file-btn");
+      if (modalRemoveBtn) {
+        modalRemoveBtn.onclick = () => {
+          clearUploadedImage();
+        };
+      }
+
       // Scenario buttons
       const sceneButtons = modal.querySelectorAll(".og-scene-btn");
       sceneButtons.forEach((btn) => {
@@ -633,6 +781,8 @@
         const file = e.target.files?.[0];
         if (file) {
           document.getElementById("og-file-name").textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+          if (modalRemoveBtn) modalRemoveBtn.style.display = "inline-block";
+          injectFileStatusBar(file.name, file.size / 1024);
           uploadAndDetectStudio(file);
           processInPageUpload(file);
         }
@@ -776,5 +926,6 @@
     openStudio: openAiStudioModal,
     runScenario: runInPageScenario,
     processUpload: processInPageUpload,
+    clearImage: clearUploadedImage,
   };
 })();
