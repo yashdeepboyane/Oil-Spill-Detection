@@ -46,61 +46,25 @@ class OilSpillDetector:
 
     def validate_scene(self, img: np.ndarray, gray: np.ndarray) -> Tuple[bool, str, str]:
         """
-        Validates if the image is a valid marine/satellite/drone ocean scene
-        versus an invalid/unrelated image (e.g. document, portrait, cartoon, solid color).
-        
+        Validates if the file is a readable, non-empty image.
         Returns: (is_valid, validation_message, scene_type)
         """
         height, width = img.shape[:2]
         
         # 1. Dimension Check
-        if width < 50 or height < 50:
-            return False, "Image resolution is too low (< 50x50 px). Please upload higher resolution satellite imagery.", "corrupt"
+        if width < 20 or height < 20:
+            return False, "Image resolution is too low (< 20×20 px) or corrupted file.", "corrupt"
 
-        total_pixels = height * width
-        
-        # 2. Blank / Solid Color / Underexposed Check
+        # 2. Blank / Solid Color Check
         std_dev = float(np.std(gray))
-        if std_dev < 3.5:
-            return False, "Image has virtually zero variance (solid blank or completely dark/white image). Please upload a valid satellite scene.", "blank"
+        if std_dev < 1.0:
+            return False, "Image has zero variance (solid blank or completely black/white image).", "blank"
 
-        # 3. Document / Text / Screenshot Check (Extreme high frequency line transitions or white backgrounds)
-        edges = cv2.Canny(gray, 50, 150)
-        edge_density = float(np.count_nonzero(edges)) / float(total_pixels)
-        
-        # Calculate histogram distribution
-        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-        hist_norm = hist / hist.sum()
-        
-        # Check for white document / screenshot backgrounds (predominantly near-white > 240)
-        if hist_norm[240:].sum() > 0.60:
-            return False, "Image appears to be a text document, paper scan, or user interface screenshot rather than a satellite ocean scene.", "document"
-            
-        # Check for extreme binary high-contrast graphics
-        extreme_ends = hist_norm[:15].sum() + hist_norm[240:].sum()
-        if extreme_ends > 0.70 and edge_density > 0.04:
-            return False, "Image has high-contrast synthetic graphics or text line transitions uncharacteristic of natural ocean surfaces.", "document"
-
-        # 4. Color / Marine Scene Check
-        # Check HSV color distribution if RGB
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
-        
-        # In SAR imagery: single channel / grayscale with continuous Rayleigh backscatter
+        # Determine sensor type for reporting
         is_grayscale = (img[:, :, 0] == img[:, :, 1]).all() and (img[:, :, 1] == img[:, :, 2]).all()
-        
-        if is_grayscale:
-            scene_type = "SAR Grayscale"
-        else:
-            # For Optical/Drone: Check if there is plausible water representation
-            # Water typically has hue in cyan/blue/green/gray range or low saturation
-            # If saturation is extremely high in unnatural warm colors (pure reds/yellows/magentas everywhere), check marine profile
-            red_pixels = np.count_nonzero(((h < 15) | (h > 165)) & (s > 90))
-            if red_pixels / total_pixels > 0.40:
-                return False, "Image does not exhibit marine or sea surface optical characteristics (predominantly non-marine color spectrum).", "non_marine"
-            scene_type = "Optical Satellite/Aerial"
+        scene_type = "SAR Grayscale" if is_grayscale else "Optical Satellite / Aerial"
 
-        return True, "Valid marine/satellite observation scene.", scene_type
+        return True, "Valid observation scene.", scene_type
 
     def analyze_image(
         self, 
