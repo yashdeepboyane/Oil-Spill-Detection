@@ -2,7 +2,7 @@
  * OceanGuard Live AI Bridge
  * Fully connects the in-page React UI and the AI Studio to the Python FastAPI + OpenCV backend.
  * Dynamically updates all detection results, area calculations, confidence scores,
- * analyst notes, and inspection overlays on every upload.
+ * analyst notes, inspection overlays, and the LIVE 6-STAGE PIPELINE STATUS with accurate values.
  * Provides clear image requirements and guidelines for optimal detection,
  * and includes a dedicated Delete / Remove button to clear uploaded images.
  */
@@ -76,7 +76,6 @@
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:12px;">
-        <!-- What Should Be Present -->
         <div style="background:white;border:1px solid #bae6fd;border-radius:12px;padding:12px 14px;">
           <div style="font-weight:800;font-size:11px;color:#047857;display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span>✅ What Should Be Present in the Image</span>
@@ -89,7 +88,6 @@
           </ul>
         </div>
 
-        <!-- What to Avoid -->
         <div style="background:white;border:1px solid #bae6fd;border-radius:12px;padding:12px 14px;">
           <div style="font-weight:800;font-size:11px;color:#be123c;display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span>❌ What NOT to Upload (Will Be Flagged Invalid)</span>
@@ -170,7 +168,6 @@
       </button>
     `;
 
-    // Attach click handler to Delete button
     document.getElementById("og-remove-inpage-file").onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -180,7 +177,7 @@
 
   // Clear/Reset the uploaded image and restore initial standby state
   function clearUploadedImage() {
-    console.log("Clearing uploaded image...");
+    console.log("Clearing uploaded image and resetting pipeline...");
 
     // 1. Clear file input value
     const fileInputs = document.querySelectorAll('input[type="file"]');
@@ -235,15 +232,112 @@
       "blue"
     );
 
-    // 7. Remove in-page visual evidence panel
+    // 7. Reset In-Page Pipeline Status Card to 0% Standby
+    resetInPagePipelineStatus();
+
+    // 8. Remove in-page visual evidence panel
     const visuals = document.getElementById("og-inpage-visuals");
     if (visuals) visuals.remove();
 
-    // 8. Reset Modal elements if open
+    // 9. Reset Modal elements if open
     const modalFileName = document.getElementById("og-file-name");
     if (modalFileName) modalFileName.textContent = "or select a scenario above";
     const modalRemoveBtn = document.getElementById("og-remove-modal-file-btn");
     if (modalRemoveBtn) modalRemoveBtn.style.display = "none";
+  }
+
+  // --- Real-time In-Page Pipeline Status Controller ---
+  function updateInPagePipeline(percentage, isProcessing, stagesData = null) {
+    let pipelineCard = null;
+    document.querySelectorAll("h2").forEach((h2) => {
+      if (h2.textContent?.includes("Live detection experience") || h2.textContent?.includes("Pipeline status")) {
+        pipelineCard = h2.closest("div.rounded-2xl");
+      }
+    });
+
+    if (!pipelineCard) return;
+
+    // 1. Percentage number
+    const percentEl = pipelineCard.querySelector(".font-mono-app.text-xl") || pipelineCard.querySelector("span.text-xl") || pipelineCard.querySelector("span");
+    if (percentEl) {
+      percentEl.textContent = isProcessing ? `${percentage}%` : `${percentage}%`;
+      percentEl.style.color = percentage === 100 ? "#38bdf8" : percentage === 0 ? "#64748b" : "#fb923c";
+    }
+
+    // 2. Progress Bar
+    const progressBar = pipelineCard.querySelector(".rounded-full.bg-cyan-300");
+    if (progressBar) {
+      progressBar.style.width = `${percentage}%`;
+      progressBar.style.backgroundColor = percentage === 100 ? "#38bdf8" : "#38bdf8";
+      progressBar.style.transition = "width 0.4s ease";
+    }
+
+    // 3. Stage Items
+    const defaultStageNames = [
+      "SAR image intake",
+      "Noise filtering",
+      "Super resolution",
+      "Dark-region segmentation",
+      "AIS correlation",
+      "Review package",
+    ];
+
+    const stagesContainer = pipelineCard.querySelector(".space-y-3") || pipelineCard.querySelectorAll("div.space-y-3")[0];
+    if (stagesContainer) {
+      const stageRows = stagesContainer.children;
+      for (let i = 0; i < stageRows.length && i < 6; i++) {
+        const row = stageRows[i];
+        const circle = row.querySelector("div");
+        const titleSpan = row.querySelector("span");
+
+        const stageCompleted = percentage >= (i + 1) * 16;
+        const stageWorking = percentage < (i + 1) * 16 && percentage >= i * 16 && isProcessing;
+
+        // Update Circle
+        if (circle) {
+          if (stageCompleted) {
+            circle.className = "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-cyan-300 bg-cyan-300 text-[10px] text-[#092747] font-bold";
+            circle.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+          } else if (stageWorking) {
+            circle.className = "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-orange-300 bg-orange-400/20 text-[10px] text-orange-200 font-bold animate-pulse";
+            circle.textContent = String(i + 1);
+          } else {
+            circle.className = "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/20 text-[10px] text-slate-500 font-medium";
+            circle.textContent = String(i + 1);
+          }
+        }
+
+        // Update Stage Text & Dynamic Subtitle
+        if (titleSpan) {
+          titleSpan.className = stageCompleted ? "text-[11px] font-semibold text-white truncate" : "text-[11px] text-slate-400 truncate";
+        }
+
+        // Detail Subtitle badge on the right
+        let detailSpan = row.querySelector(".og-stage-detail");
+        if (!detailSpan) {
+          detailSpan = document.createElement("span");
+          detailSpan.className = "og-stage-detail ml-auto shrink-0 font-mono-app text-[9px]";
+          row.appendChild(detailSpan);
+        }
+
+        if (stagesData && stagesData[i] && stageCompleted) {
+          detailSpan.textContent = stagesData[i].detail;
+          detailSpan.style.color = "#38bdf8";
+        } else if (stageWorking) {
+          detailSpan.textContent = "working...";
+          detailSpan.style.color = "#fb923c";
+        } else if (percentage === 0) {
+          detailSpan.textContent = "waiting";
+          detailSpan.style.color = "#64748b";
+        } else {
+          detailSpan.textContent = "";
+        }
+      }
+    }
+  }
+
+  function resetInPagePipelineStatus() {
+    updateInPagePipeline(0, false, null);
   }
 
   // Hook into in-page elements on the /detection page
@@ -298,9 +392,10 @@
   // Periodic observer to catch DOM changes on client-side routing
   setInterval(attachInPageDetectionHandlers, 600);
 
-  // Process file upload directly for in-page UI
+  // Process file upload directly for in-page UI with simulated step progression
   async function processInPageUpload(file) {
-    setInPageLoading(true, `Uploading & analyzing "${file.name}"...`);
+    // Animate pipeline stages
+    animatePipelineProgression();
 
     const formData = new FormData();
     formData.append("file", file);
@@ -313,18 +408,18 @@
         body: formData,
       });
       const data = await res.json();
+      updateInPagePipeline(100, false, data.pipeline_stages);
       updateInPageDetectionResults(file.name, data);
     } catch (err) {
       console.error("Detection error:", err);
       updateInPageError(file.name, "Failed to connect to AI Detection API: " + err.message);
-    } finally {
-      setInPageLoading(false);
+      resetInPagePipelineStatus();
     }
   }
 
-  // Run a built-in scenario for in-page UI
+  // Run a built-in scenario for in-page UI with live pipeline progression
   async function runInPageScenario(scenarioId) {
-    setInPageLoading(true, "Loading and analyzing satellite scene...");
+    animatePipelineProgression();
 
     try {
       const res = await fetch(`/api/scenarios/run/${scenarioId}?gsd_meters=10.0&threshold=35.0`, {
@@ -332,26 +427,27 @@
       });
       const data = await res.json();
       const sceneName = data.scenario_info?.name || scenarioId;
+      updateInPagePipeline(100, false, data.pipeline_stages);
       updateInPageDetectionResults(sceneName, data);
     } catch (err) {
       console.error("Scenario error:", err);
       updateInPageError("Scenario", err.message);
-    } finally {
-      setInPageLoading(false);
+      resetInPagePipelineStatus();
     }
   }
 
-  function setInPageLoading(loading, message = "Analyzing...") {
-    const statusTitles = document.querySelectorAll("h2");
-    statusTitles.forEach((h2) => {
-      if (h2.textContent?.includes("Live detection experience") || h2.textContent?.includes("Pipeline status")) {
-        const parent = h2.closest("div");
-        const statusPercent = parent?.parentElement?.querySelector("span");
-        if (statusPercent) {
-          statusPercent.textContent = loading ? "Analyzing..." : "100%";
-        }
+  function animatePipelineProgression() {
+    let p = 10;
+    updateInPagePipeline(p, true);
+    const timer = setInterval(() => {
+      p += 18;
+      if (p >= 90) {
+        clearInterval(timer);
+        updateInPagePipeline(90, true);
+      } else {
+        updateInPagePipeline(p, true);
       }
-    });
+    }, 120);
   }
 
   // Dynamically update all DOM elements in the /detection Result Package
