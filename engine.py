@@ -2,9 +2,8 @@
 OceanGuard AI / Computer Vision Engine for Marine Oil Spill Detection
 Specialized for Synthetic Aperture Radar (SAR) and Optical Satellite/Drone Imagery.
 
-Detects surface capillary wave dampening (dark SAR backscatter patches),
-extracts geometric morphology, filters ocean look-alikes, and generates
-calibrated area telemetry and visual masks.
+Performs robust marine scene validation, dark-spot capillary wave damping segmentation,
+morphological feature extraction, look-alike discrimination, and dynamic telemetry.
 """
 
 import cv2
@@ -28,7 +27,7 @@ class OilSpillDetector:
         np_arr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
         if img is None:
-            raise ValueError("Failed to decode image bytes. Unsupported image format.")
+            raise ValueError("Failed to decode image bytes. Unsupported or corrupted image file.")
         
         # Handle grayscale, RGBA, or BGR
         if len(img.shape) == 2:
@@ -45,32 +44,123 @@ class OilSpillDetector:
         b64 = base64.b64encode(buffer).decode('utf-8')
         return f"data:image/png;base64,{b64}"
 
+    def validate_scene(self, img: np.ndarray, gray: np.ndarray) -> Tuple[bool, str, str]:
+        """
+        Validates if the image is a valid marine/satellite/drone ocean scene
+        versus an invalid/unrelated image (e.g. document, portrait, cartoon, solid color).
+        
+        Returns: (is_valid, validation_message, scene_type)
+        """
+        height, width = img.shape[:2]
+        
+        # 1. Dimension Check
+        if width < 50 or height < 50:
+            return False, "Image resolution is too low (< 50x50 px). Please upload higher resolution satellite imagery.", "corrupt"
+
+        total_pixels = height * width
+        
+        # 2. Blank / Solid Color / Underexposed Check
+        std_dev = float(np.std(gray))
+        if std_dev < 3.5:
+            return False, "Image has virtually zero variance (solid blank or completely dark/white image). Please upload a valid satellite scene.", "blank"
+
+        # 3. Document / Text / Screenshot Check (Extreme high frequency line transitions or white backgrounds)
+        edges = cv2.Canny(gray, 50, 150)
+        edge_density = float(np.count_nonzero(edges)) / float(total_pixels)
+        
+        # Calculate histogram distribution
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+        hist_norm = hist / hist.sum()
+        
+        # Check for white document / screenshot backgrounds (predominantly near-white > 240)
+        if hist_norm[240:].sum() > 0.60:
+            return False, "Image appears to be a text document, paper scan, or user interface screenshot rather than a satellite ocean scene.", "document"
+            
+        # Check for extreme binary high-contrast graphics
+        extreme_ends = hist_norm[:15].sum() + hist_norm[240:].sum()
+        if extreme_ends > 0.70 and edge_density > 0.04:
+            return False, "Image has high-contrast synthetic graphics or text line transitions uncharacteristic of natural ocean surfaces.", "document"
+
+        # 4. Color / Marine Scene Check
+        # Check HSV color distribution if RGB
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
+        
+        # In SAR imagery: single channel / grayscale with continuous Rayleigh backscatter
+        is_grayscale = (img[:, :, 0] == img[:, :, 1]).all() and (img[:, :, 1] == img[:, :, 2]).all()
+        
+        if is_grayscale:
+            scene_type = "SAR Grayscale"
+        else:
+            # For Optical/Drone: Check if there is plausible water representation
+            # Water typically has hue in cyan/blue/green/gray range or low saturation
+            # If saturation is extremely high in unnatural warm colors (pure reds/yellows/magentas everywhere), check marine profile
+            red_pixels = np.count_nonzero(((h < 15) | (h > 165)) & (s > 90))
+            if red_pixels / total_pixels > 0.40:
+                return False, "Image does not exhibit marine or sea surface optical characteristics (predominantly non-marine color spectrum).", "non_marine"
+            scene_type = "Optical Satellite/Aerial"
+
+        return True, "Valid marine/satellite observation scene.", scene_type
+
     def analyze_image(
         self, 
         image_bytes: bytes, 
         gsd_meters: Optional[float] = None,
-        confidence_threshold: float = 40.0
+        confidence_threshold: float = 35.0
     ) -> Dict[str, Any]:
         """
         Full 6-Stage Computer Vision & AI Detection Pipeline:
-        1. Ingestion & Format Normalization
-        2. Speckle Reduction & Noise Filtering (Bilateral / Adaptive)
-        3. Background Water Clutter Normalization & CLAHE
-        4. Multi-Scale Dark-Spot Segmentation (Adaptive Thresholding)
-        5. Contour Feature Extraction & Morphology Analysis
-        6. Look-Alike Discrimination, Sizing Telemetry & Visualization
+        1. Ingestion & Validation
+        2. Speckle Reduction & Noise Filtering (Bilateral)
+        3. Clutter & Contrast Normalization (CLAHE)
+        4. Multi-Scale Dark-Spot Segmentation
+        5. Morphological Contour Extraction & Geometry Telemetry
+        6. Look-Alike Discrimination, Sizing Telemetry & Dynamic Reporting
         """
         gsd = gsd_meters if (gsd_meters and gsd_meters > 0) else self.default_gsd
         pixel_area_m2 = gsd * gsd
         pixel_area_km2 = pixel_area_m2 / 1_000_000.0
 
-        # Stage 1: Ingestion
+        # Stage 1: Ingestion & Format Normalization
         img = self._bytes_to_cv2(image_bytes)
         height, width = img.shape[:2]
         total_pixels = height * width
+        now_utc = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
         # Convert to grayscale for radar / intensity analysis
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # Scene Validation
+        is_valid, validation_msg, scene_type = self.validate_scene(img, gray)
+        if not is_valid:
+            # Create an invalid indicator overlay
+            invalid_img = img.copy()
+            cv2.rectangle(invalid_img, (0, 0), (width, height), (0, 0, 180), 8)
+            cv2.putText(invalid_img, "INVALID SCENE - NOT OCEAN / SAR DATA", (20, 40), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA)
+            
+            return {
+                "is_valid_image": False,
+                "error_message": validation_msg,
+                "spill_detected": False,
+                "overall_confidence": 0.0,
+                "severity": "Invalid Image",
+                "severity_tone": "red",
+                "slick_count": 0,
+                "total_area_km2": 0.0,
+                "total_perimeter_km": 0.0,
+                "ground_sampling_distance_m": gsd,
+                "image_dimensions": {"width": width, "height": height},
+                "slicks": [],
+                "analyst_note": f"⚠️ Image validation failed: {validation_msg}",
+                "pipeline_stages": [
+                    {"stage": 1, "name": "Image Ingestion & Validation", "status": "failed", "detail": validation_msg}
+                ],
+                "processed_overlay_image": self._cv2_to_base64_png(invalid_img),
+                "heatmap_image": self._cv2_to_base64_png(invalid_img),
+                "detection_time_utc": now_utc,
+                "timestamp_utc": datetime.now(timezone.utc).isoformat()
+            }
 
         # Stage 2: Speckle Reduction
         # Bilateral filter smooths multiplicative radar speckle while preserving sharp boundaries
@@ -82,7 +172,6 @@ class OilSpillDetector:
 
         # Stage 4: Multi-Scale Dark-Spot Segmentation
         # In SAR, oil slicks cause specular reflection away from satellite -> dark patches
-        # We combine Otsu's thresholding with adaptive thresholding
         otsu_thresh, _ = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         adaptive_thresh = cv2.adaptiveThreshold(
             denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
@@ -99,7 +188,7 @@ class OilSpillDetector:
         cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel_bridge)
 
         # Stage 5: Contour Extraction and Morphological Analysis
-        contours, hierarchy = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         # Surrounding sea background mean intensity
         sea_background_intensity = float(np.mean(gray))
@@ -116,7 +205,7 @@ class OilSpillDetector:
         intensity_deficit = np.clip(255 - gray, 0, 255).astype(np.uint8)
         heatmap_raw = cv2.applyColorMap(intensity_deficit, cv2.COLORMAP_INFERNO)
 
-        min_slick_area_px = max(50, int(total_pixels * 0.0003))
+        min_slick_area_px = max(40, int(total_pixels * 0.0002))
         max_slick_area_px = int(total_pixels * 0.70)  # avoid entire image landmass
 
         for idx, cnt in enumerate(contours):
@@ -137,8 +226,7 @@ class OilSpillDetector:
             width_dim = max(min(rw, rh), 1.0)
             elongation = float(length / width_dim)
 
-            # Circularity / Compactness: 4 * pi * Area / Perimeter^2
-            # Natural oil slicks under wind drift are elongated filaments (compactness < 0.4)
+            # Compactness / Circularity: 4 * pi * Area / Perimeter^2
             compactness = float((4 * math.pi * area_px) / (perimeter_px ** 2)) if perimeter_px > 0 else 0.0
 
             # Pixel intensities inside slick
@@ -154,14 +242,10 @@ class OilSpillDetector:
             texture_std = float(np.std(slick_pixels)) if len(slick_pixels) > 0 else 0.0
 
             # Calculate Confidence Score (0-100%)
-            # 1. Dark-region contrast score (0-30 pts)
             c_score = min(30.0, max(0.0, (contrast_ratio - 1.1) * 35.0))
-            # 2. Shape elongation & consistency (0-30 pts)
             e_score = min(30.0, max(5.0, elongation * 5.0)) if compactness < 0.6 else 8.0
-            # 3. Texture homogeneity (0-20 pts)
             t_score = min(20.0, max(0.0, (40.0 - texture_std) * 0.5))
-            # 4. Scale & Boundary Definition (0-20 pts)
-            b_score = min(20.0, math.log10(area_px) * 5.0)
+            b_score = min(20.0, math.log10(max(area_px, 10)) * 5.0)
 
             raw_confidence = c_score + e_score + t_score + b_score
             confidence = round(min(98.5, max(12.0, raw_confidence)), 1)
@@ -184,11 +268,11 @@ class OilSpillDetector:
             cv2.polylines(overlay, [box], True, (0, 220, 255), 1)
 
             # Label on overlay
-            label = f"Slick #{idx+1} ({confidence}%)"
-            cv2.putText(overlay, label, (x, max(y - 8, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 240, 255), 1, cv2.LINE_AA)
+            label = f"Slick #{len(detected_slicks)+1} ({confidence}%)"
+            cv2.putText(overlay, label, (x, max(y - 8, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 240, 255), 1, cv2.LINE_AA)
 
             detected_slicks.append({
-                "id": idx + 1,
+                "id": len(detected_slicks) + 1,
                 "confidence_pct": confidence,
                 "area_px": int(area_px),
                 "area_km2": area_km2,
@@ -207,7 +291,7 @@ class OilSpillDetector:
         alpha = 0.35
         cv2.addWeighted(mask_colored, alpha, overlay, 1.0 - alpha, 0, overlay)
 
-        # Draw overall HUD banner onto overlay
+        # Telemetry calculations
         total_area_km2 = round(total_spill_area_px * pixel_area_km2, 3)
         total_perimeter_km = round(total_spill_perimeter_px * (gsd / 1000.0), 2)
         spill_detected = len(detected_slicks) > 0
@@ -217,42 +301,52 @@ class OilSpillDetector:
             if spill_detected else 0.0
         )
 
-        # Severity ranking
-        if not spill_detected or total_area_km2 < 0.5:
-            severity = "None" if not spill_detected else "Minor Anomaly"
-            severity_tone = "green" if not spill_detected else "blue"
+        # Dynamic Severity ranking
+        if not spill_detected:
+            severity = "Clean Water"
+            severity_tone = "green"
+            analyst_note = f"Scan completed on {width}×{height} px frame. Sea surface backscatter is uniform with no anomalous capillary wave damping detected (0.00 km²). Water surface is clear of oil slicks."
+        elif total_area_km2 < 0.5:
+            severity = "Minor Anomaly"
+            severity_tone = "blue"
+            analyst_note = f"Identified {len(detected_slicks)} localized surface anomaly covering {total_area_km2} km² with {avg_confidence}% confidence. Low environmental threat; recommend periodic monitoring."
         elif total_area_km2 < 5.0:
             severity = "Moderate"
             severity_tone = "orange"
-        elif total_area_km2 < 20.0:
+            analyst_note = f"Identified {len(detected_slicks)} distinct slick body covering {total_area_km2} km² (perimeter: {total_perimeter_km} km). Dark SAR attenuation pattern is consistent with an active surface oil spill."
+        elif total_area_km2 < 15.0:
             severity = "High Priority"
             severity_tone = "orange"
+            analyst_note = f"High priority incident: {len(detected_slicks)} major slick cluster(s) covering {total_area_km2} km² with {avg_confidence}% AI confidence. Slicks exhibit strong drift elongation; response coordination advised."
         else:
             severity = "Critical Marine Emergency"
             severity_tone = "red"
+            analyst_note = f"CRITICAL INCIDENT: Massive oil discharge covering {total_area_km2} km² detected across the observation swath. Immediate containment and emergency protocol dispatch recommended."
 
-        # Watermark & Status HUD
+        # Top HUD Banner
         hud_bg = np.zeros((45, width, 3), dtype=np.uint8)
         hud_color = (0, 0, 180) if spill_detected else (30, 140, 50)
         cv2.rectangle(hud_bg, (0, 0), (width, 45), hud_color, -1)
         hud_text = (
-            f"OCEANGUARD AI - SPILL DETECTED: {len(detected_slicks)} slicks | Area: {total_area_km2} km2 | Confidence: {avg_confidence}%"
-            if spill_detected else "OCEANGUARD AI - SCAN COMPLETE: No Anomalous Dark Slicks Detected (Clean Water Surface)"
+            f"OCEANGUARD AI - DETECTED: {len(detected_slicks)} slicks | Area: {total_area_km2} km2 | Conf: {avg_confidence}%"
+            if spill_detected else "OCEANGUARD AI - SCAN COMPLETE: Clean Water Surface (No Slicks Detected)"
         )
-        cv2.putText(hud_bg, hud_text, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(hud_bg, hud_text, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1, cv2.LINE_AA)
         final_overlay = np.vstack([hud_bg, overlay])
 
         # Stage status list
         pipeline_stages = [
-            {"stage": 1, "name": "SAR / Optical Image Intake", "status": "completed", "detail": f"{width}x{height} px, {len(img.shape)} channels"},
+            {"stage": 1, "name": "Image Ingestion & Validation", "status": "completed", "detail": f"{width}×{height} px, {scene_type}"},
             {"stage": 2, "name": "Bilateral Speckle Filtering", "status": "completed", "detail": "Kernel d=9, sigma=75 noise reduction"},
-            {"stage": 3, "name": "Clutter & Contrast Normalization", "status": "completed", "detail": f"CLAHE equalized, ocean ambient mean={sea_background_intensity:.1f}"},
+            {"stage": 3, "name": "Clutter & Contrast Normalization", "status": "completed", "detail": f"CLAHE equalized, ambient sea mean={sea_background_intensity:.1f}"},
             {"stage": 4, "name": "Multi-Scale Dark-Spot Segmentation", "status": "completed", "detail": f"Otsu thresh={otsu_thresh:.0f} + adaptive window"},
             {"stage": 5, "name": "Contour & Morphology Analysis", "status": "completed", "detail": f"{len(contours)} initial candidate regions screened"},
             {"stage": 6, "name": "Look-Alike Filtering & Telemetry", "status": "completed", "detail": f"{len(detected_slicks)} verified slicks, {total_area_km2} km²"}
         ]
 
         return {
+            "is_valid_image": True,
+            "scene_type": scene_type,
             "spill_detected": spill_detected,
             "overall_confidence": avg_confidence,
             "severity": severity,
@@ -263,9 +357,11 @@ class OilSpillDetector:
             "ground_sampling_distance_m": gsd,
             "image_dimensions": {"width": width, "height": height},
             "slicks": detected_slicks,
+            "analyst_note": analyst_note,
             "pipeline_stages": pipeline_stages,
             "processed_overlay_image": self._cv2_to_base64_png(final_overlay),
             "heatmap_image": self._cv2_to_base64_png(heatmap_raw),
+            "detection_time_utc": now_utc,
             "timestamp_utc": datetime.now(timezone.utc).isoformat()
         }
 

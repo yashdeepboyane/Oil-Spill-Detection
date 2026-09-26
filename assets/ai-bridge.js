@@ -1,6 +1,8 @@
 /**
  * OceanGuard Live AI Bridge
- * Connects the frontend UI to the real Python FastAPI + OpenCV computer vision backend.
+ * Fully connects the in-page React UI and the AI Studio to the Python FastAPI + OpenCV backend.
+ * Dynamically updates all detection results, area calculations, confidence scores,
+ * analyst notes, and inspection overlays on every upload.
  */
 
 (function () {
@@ -43,14 +45,351 @@
     `;
     pill.innerHTML = `
       <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#38bdf8;box-shadow:0 0 8px #38bdf8;animation:pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;"></span>
-      <span><b>OpenCV Engine Active</b> (v${health.opencv_version})</span>
-      <span style="color:#38bdf8;text-decoration:underline;margin-left:4px;">Open Live Studio</span>
+      <span><b>OpenCV AI Active</b> (v${health.opencv_version})</span>
+      <span style="color:#38bdf8;text-decoration:underline;margin-left:4px;">Live Studio</span>
     `;
     pill.onclick = () => openAiStudioModal();
     document.body.appendChild(pill);
   }
 
-  // Create the interactive AI Detection Studio Modal
+  // Hook into in-page elements on the /detection page
+  function attachInPageDetectionHandlers() {
+    // Find all file inputs on the page
+    const fileInputs = document.querySelectorAll('input[type="file"]');
+    fileInputs.forEach((input) => {
+      if (input.dataset.ogBound) return;
+      input.dataset.ogBound = "true";
+
+      input.addEventListener("change", async (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          await processInPageUpload(file);
+        }
+      });
+    });
+
+    // Handle "Load sample scene" button in-page
+    const buttons = document.querySelectorAll("button");
+    buttons.forEach((btn) => {
+      if (btn.dataset.ogBound) return;
+      const text = btn.textContent?.trim().toLowerCase();
+      if (text === "load sample scene") {
+        btn.dataset.ogBound = "true";
+        btn.addEventListener("click", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          await runInPageScenario("tanker_spill");
+        });
+      } else if (text === "run detection") {
+        btn.dataset.ogBound = "true";
+        btn.addEventListener("click", async (e) => {
+          // If a file is selected, re-run, otherwise open studio
+          const fileInput = document.querySelector('input[type="file"]');
+          if (fileInput?.files?.[0]) {
+            e.preventDefault();
+            e.stopPropagation();
+            await processInPageUpload(fileInput.files[0]);
+          } else {
+            openAiStudioModal();
+          }
+        });
+      }
+    });
+  }
+
+  // Periodic observer to catch DOM changes on client-side routing
+  setInterval(attachInPageDetectionHandlers, 600);
+
+  // Process file upload directly for in-page UI
+  async function processInPageUpload(file) {
+    setInPageLoading(true, `Uploading & analyzing "${file.name}"...`);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("gsd_meters", 10.0);
+    formData.append("confidence_threshold", 35.0);
+
+    try {
+      const res = await fetch("/api/detect", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      updateInPageDetectionResults(file.name, data);
+    } catch (err) {
+      console.error("Detection error:", err);
+      updateInPageError(file.name, "Failed to connect to AI Detection API: " + err.message);
+    } finally {
+      setInPageLoading(false);
+    }
+  }
+
+  // Run a built-in scenario for in-page UI
+  async function runInPageScenario(scenarioId) {
+    setInPageLoading(true, "Loading and analyzing satellite scene...");
+
+    try {
+      const res = await fetch(`/api/scenarios/run/${scenarioId}?gsd_meters=10.0&threshold=35.0`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      const sceneName = data.scenario_info?.name || scenarioId;
+      updateInPageDetectionResults(sceneName, data);
+    } catch (err) {
+      console.error("Scenario error:", err);
+      updateInPageError("Scenario", err.message);
+    } finally {
+      setInPageLoading(false);
+    }
+  }
+
+  function setInPageLoading(loading, message = "Analyzing...") {
+    // Find the pipeline percentage or status text
+    const statusTitles = document.querySelectorAll("h2");
+    statusTitles.forEach((h2) => {
+      if (h2.textContent?.includes("Live detection experience") || h2.textContent?.includes("Pipeline status")) {
+        const parent = h2.closest("div");
+        const statusPercent = parent?.parentElement?.querySelector("span");
+        if (statusPercent) {
+          statusPercent.textContent = loading ? "Analyzing..." : "100%";
+        }
+      }
+    });
+  }
+
+  // Dynamically update all DOM elements in the /detection Result Package
+  function updateInPageDetectionResults(filename, data) {
+    console.log("Updating in-page detection view with real data:", data);
+
+    // 1. Locate the Result Package card
+    let resultHeader = null;
+    document.querySelectorAll("h2").forEach((h2) => {
+      if (h2.textContent?.includes("OS-2026-") || h2.textContent?.includes("possible oil") || h2.textContent?.includes("Clean Water") || h2.textContent?.includes("Invalid Image")) {
+        resultHeader = h2;
+      }
+    });
+
+    if (data.is_valid_image === false) {
+      // Handle Invalid Image
+      if (resultHeader) {
+        resultHeader.textContent = `${filename} · ⚠️ Invalid Scene`;
+        resultHeader.style.color = "#f43f5e";
+      }
+
+      // Update badge
+      const badge = resultHeader?.parentElement?.parentElement?.querySelector("span");
+      if (badge) {
+        badge.textContent = "Invalid Image";
+        badge.className = "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase bg-red-100 text-red-700";
+      }
+
+      // Update 4 metric cards
+      updateMetricCards("N/A", "0%", "Failed", "Invalid Scene");
+
+      // Update Analyst Note
+      updateAnalystNote(data.analyst_note || "The uploaded file does not match marine satellite or sea surface radar characteristics. Please upload SAR (.tif, .png) or sea surface imagery.", "red");
+
+      // Remove/update inspection panel
+      renderInPageVisuals(data, false);
+      return;
+    }
+
+    // Handle Valid Image
+    if (resultHeader) {
+      if (data.spill_detected) {
+        resultHeader.textContent = `${filename} · ${data.severity}`;
+        resultHeader.style.color = "#0f172a";
+      } else {
+        resultHeader.textContent = `${filename} · Clean Water Surface`;
+        resultHeader.style.color = "#0f172a";
+      }
+    }
+
+    // Update badge
+    const badge = resultHeader?.parentElement?.parentElement?.querySelector("span");
+    if (badge) {
+      if (data.spill_detected) {
+        badge.textContent = "Oil Spill Detected";
+        badge.className = "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase bg-orange-100 text-orange-700";
+      } else {
+        badge.textContent = "Clean Water (Clear)";
+        badge.className = "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase bg-emerald-100 text-emerald-700";
+      }
+    }
+
+    // Update 4 metric cards with REAL dynamic data
+    const areaStr = data.spill_detected ? `${data.total_area_km2} km²` : "0.00 km²";
+    const confStr = `${data.overall_confidence}%`;
+    const timeStr = data.detection_time_utc || new Date().toISOString().slice(11, 16) + " UTC";
+    const riskStr = data.severity;
+
+    updateMetricCards(areaStr, confStr, timeStr, riskStr);
+
+    // Update Analyst Note with REAL dynamic text
+    updateAnalystNote(data.analyst_note, data.severity_tone);
+
+    // Render / Update In-Page Visual Inspection Panel
+    renderInPageVisuals(data, true);
+  }
+
+  function updateMetricCards(area, conf, time, risk) {
+    const labels = ["Estimated area", "Correlation", "Detection", "Risk"];
+    const values = [area, conf, time, risk];
+
+    document.querySelectorAll("div").forEach((div) => {
+      const text = div.textContent?.trim();
+      const idx = labels.indexOf(text);
+      if (idx !== -1 && div.nextElementSibling) {
+        div.nextElementSibling.textContent = values[idx];
+      }
+    });
+  }
+
+  function updateAnalystNote(noteText, tone) {
+    let analystHeading = null;
+    document.querySelectorAll("h2").forEach((h2) => {
+      if (h2.textContent?.trim() === "Analyst note") {
+        analystHeading = h2;
+      }
+    });
+
+    if (analystHeading) {
+      const parentCard = analystHeading.closest("div.rounded-2xl");
+      const notePara = parentCard?.querySelector("p");
+      if (notePara) {
+        notePara.textContent = noteText;
+      }
+
+      if (parentCard) {
+        if (tone === "red") {
+          parentCard.className = "rounded-2xl border border-red-200 bg-red-50/80 p-5";
+        } else if (tone === "green") {
+          parentCard.className = "rounded-2xl border border-emerald-200 bg-emerald-50/80 p-5";
+        } else if (tone === "orange") {
+          parentCard.className = "rounded-2xl border border-orange-200 bg-orange-50/80 p-5";
+        } else {
+          parentCard.className = "rounded-2xl border border-blue-200 bg-blue-50/80 p-5";
+        }
+      }
+    }
+  }
+
+  function renderInPageVisuals(data, isValid) {
+    let container = document.getElementById("og-inpage-visuals");
+    if (!container) {
+      // Find the parent grid containing the Result Package and Analyst note
+      const analystNote = document.querySelector("h2")?.closest(".grid");
+      if (!analystNote || !analystNote.parentElement) return;
+
+      container = document.createElement("div");
+      container.id = "og-inpage-visuals";
+      container.className = "mt-6 space-y-5";
+      analystNote.parentElement.appendChild(container);
+    }
+
+    if (!isValid) {
+      container.innerHTML = `
+        <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 16px; padding: 20px; color: #9f1239;">
+          <div style="display:flex;align-items:center;gap:10px;font-weight:800;font-size:14px;">
+            <span style="font-size:18px;">⚠️</span>
+            <span>Image Validation Failed</span>
+          </div>
+          <p style="margin: 8px 0 0 0; font-size: 12px; line-height: 1.6; color: #be123c;">
+            ${data.error_message || "The uploaded image is not a valid marine ocean surface or satellite radar scene."}
+          </p>
+          <div style="margin-top: 12px; font-size: 11px; color: #881337; background: white; padding: 10px 14px; border-radius: 8px; border: 1px dashed #fda4af;">
+            <b>Supported Data:</b> Sentinel-1 SAR, RADARSAT, TerraSAR-X, or aerial sea surface photography in .png, .jpg, or .tif formats.
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    // Valid visuals
+    container.innerHTML = `
+      <div style="background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 20px; box-shadow: 0 4px 20px -4px rgba(0,0,0,0.05);">
+        <div style="display:flex;align-items:center;justify-content:between;margin-bottom:16px;">
+          <div>
+            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:#0284c7;">Computer Vision Evidence</span>
+            <h3 style="margin:2px 0 0 0;font-size:15px;font-weight:800;color:#0f172a;">Live Pixel-Level Segmentation & Radar Attenuation</h3>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:8px;">
+            <span style="font-size:11px;background:#f1f5f9;color:#475569;padding:4px 10px;border-radius:6px;font-family:monospace;">${data.image_dimensions.width}×${data.image_dimensions.height} px</span>
+            <span style="font-size:11px;background:#f0fdf4;color:#166534;padding:4px 10px;border-radius:6px;font-weight:700;">GSD: ${data.ground_sampling_distance_m}m/px</span>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;">
+          <!-- Segmented Mask Overlay -->
+          <div style="background:#092544;border-radius:12px;overflow:hidden;border:1px solid #1e3a5f;">
+            <div style="padding:8px 12px;background:rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.08);font-size:11px;font-weight:700;color:#38bdf8;display:flex;justify-content:space-between;">
+              <span>OpenCV Segmentation Mask Overlay</span>
+              <span style="color:#94a3b8;font-size:10px;">${data.slick_count} Slicks Identified</span>
+            </div>
+            <div style="min-height:220px;display:flex;align-items:center;justify-content:center;background:#030d17;">
+              <img src="${data.processed_overlay_image}" style="width:100%;height:auto;display:block;object-fit:contain;" />
+            </div>
+          </div>
+
+          <!-- Heatmap -->
+          <div style="background:#092544;border-radius:12px;overflow:hidden;border:1px solid #1e3a5f;">
+            <div style="padding:8px 12px;background:rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.08);font-size:11px;font-weight:700;color:#fb923c;display:flex;justify-content:space-between;">
+              <span>Radar Capillary Wave Damping Heatmap</span>
+              <span style="color:#94a3b8;font-size:10px;">Inferno Scale</span>
+            </div>
+            <div style="min-height:220px;display:flex;align-items:center;justify-content:center;background:#030d17;">
+              <img src="${data.heatmap_image}" style="width:100%;height:auto;display:block;object-fit:contain;" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Slicks Details Table -->
+        ${
+          data.slicks && data.slicks.length > 0
+            ? `
+          <div style="margin-top:16px;border-top:1px solid #f1f5f9;padding-top:14px;">
+            <div style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Identified Slick Geometries</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:8px;">
+              ${data.slicks
+                .map(
+                  (s) => `
+                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:11px;">
+                  <div style="font-weight:700;color:#0f172a;display:flex;justify-content:space-between;">
+                    <span>Slick #${s.id}</span>
+                    <span style="color:#0284c7;">${s.confidence_pct}%</span>
+                  </div>
+                  <div style="color:#64748b;margin-top:4px;font-family:monospace;font-size:10px;">
+                    Area: <b>${s.area_km2} km²</b><br>
+                    Perimeter: ${s.perimeter_km} km<br>
+                    Elongation: ${s.elongation_ratio}x<br>
+                    Contrast Deficit: ${s.contrast_ratio}x
+                  </div>
+                </div>
+              `
+                )
+                .join("")}
+            </div>
+          </div>
+        `
+            : ""
+        }
+      </div>
+    `;
+  }
+
+  function updateInPageError(filename, errorMsg) {
+    updateInPageDetectionResults(filename, {
+      is_valid_image: false,
+      error_message: errorMsg,
+      spill_detected: false,
+      overall_confidence: 0,
+      severity: "Error",
+      total_area_km2: 0,
+      analyst_note: "Error processing image: " + errorMsg,
+    });
+  }
+
+  // --- Live AI Studio Modal ---
   function openAiStudioModal(initialScenario = null) {
     let modal = document.getElementById("og-ai-modal");
     if (!modal) {
@@ -173,9 +512,8 @@
                 </div>
               </div>
 
-              <!-- Visual Inspection Viewer (Side by side or tabs) -->
+              <!-- Visual Inspection Viewer -->
               <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px;">
-                <!-- Main Overlay -->
                 <div style="background: #071729; border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); overflow: hidden; display: flex; flex-direction: column;">
                   <div style="padding: 10px 14px; background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.1em; display: flex; justify-content: space-between;">
                     <span>OpenCV Segmentation Overlay</span>
@@ -187,7 +525,6 @@
                   </div>
                 </div>
 
-                <!-- Heatmap / Attenuation -->
                 <div style="background: #071729; border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); overflow: hidden; display: flex; flex-direction: column;">
                   <div style="padding: 10px 14px; background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 11px; font-weight: 700; color: #fb923c; text-transform: uppercase; letter-spacing: 0.1em; display: flex; justify-content: space-between;">
                     <span>Radar Backscatter Attenuation Heatmap</span>
@@ -221,38 +558,40 @@
       };
 
       // Scenario buttons
-      const buttons = modal.querySelectorAll(".og-scene-btn");
-      buttons.forEach((btn) => {
+      const sceneButtons = modal.querySelectorAll(".og-scene-btn");
+      sceneButtons.forEach((btn) => {
         btn.onclick = () => {
-          buttons.forEach((b) => (b.style.borderColor = "rgba(255,255,255,0.1)"));
+          sceneButtons.forEach((b) => (b.style.borderColor = "rgba(255,255,255,0.1)"));
           btn.style.borderColor = "#38bdf8";
           const sceneId = btn.getAttribute("data-scene");
-          runScenario(sceneId);
+          runStudioScenario(sceneId);
         };
       });
 
-      // File input
-      const fileInput = document.getElementById("og-file-input");
-      fileInput.onchange = (e) => {
+      // File input in modal
+      const modalFileInput = document.getElementById("og-file-input");
+      modalFileInput.onchange = (e) => {
         const file = e.target.files?.[0];
         if (file) {
           document.getElementById("og-file-name").textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
-          uploadAndDetect(file);
+          uploadAndDetectStudio(file);
+          // Also update in-page
+          processInPageUpload(file);
         }
       };
     }
 
     modal.style.display = "flex";
     if (initialScenario) {
-      runScenario(initialScenario);
+      runStudioScenario(initialScenario);
     } else {
-      runScenario("tanker_spill");
+      runStudioScenario("tanker_spill");
     }
   }
 
-  // API Call: Run built-in scenario
-  async function runScenario(scenarioId) {
-    setLoadingState(true);
+  // API Call from studio
+  async function runStudioScenario(scenarioId) {
+    setStudioLoading(true);
     const gsd = document.getElementById("og-gsd")?.value || 10.0;
     const thresh = document.getElementById("og-conf-thresh")?.value || 35.0;
 
@@ -261,17 +600,16 @@
         method: "POST",
       });
       const data = await res.json();
-      renderDetectionResults(data);
+      renderStudioResults(data);
     } catch (err) {
       alert("Error running scenario: " + err.message);
     } finally {
-      setLoadingState(false);
+      setStudioLoading(false);
     }
   }
 
-  // API Call: Upload user file
-  async function uploadAndDetect(file) {
-    setLoadingState(true);
+  async function uploadAndDetectStudio(file) {
+    setStudioLoading(true);
     const gsd = document.getElementById("og-gsd")?.value || 10.0;
     const thresh = document.getElementById("og-conf-thresh")?.value || 35.0;
 
@@ -285,20 +623,16 @@
         method: "POST",
         body: formData,
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "Detection failed");
-      }
       const data = await res.json();
-      renderDetectionResults(data);
+      renderStudioResults(data);
     } catch (err) {
       alert("Detection error: " + err.message);
     } finally {
-      setLoadingState(false);
+      setStudioLoading(false);
     }
   }
 
-  function setLoadingState(loading) {
+  function setStudioLoading(loading) {
     const stateEl = document.getElementById("m-state");
     if (stateEl) {
       stateEl.textContent = loading ? "Analyzing..." : "Complete";
@@ -306,29 +640,39 @@
     }
   }
 
-  function renderDetectionResults(data) {
-    // Metrics
+  function renderStudioResults(data) {
     const stateEl = document.getElementById("m-state");
     const confEl = document.getElementById("m-conf");
     const areaEl = document.getElementById("m-area");
     const slicksEl = document.getElementById("m-slicks");
     const sevEl = document.getElementById("m-severity");
 
-    if (data.spill_detected) {
+    if (data.is_valid_image === false) {
+      stateEl.textContent = "INVALID IMAGE";
+      stateEl.style.color = "#f43f5e";
+      confEl.textContent = "0%";
+      areaEl.textContent = "N/A";
+      slicksEl.textContent = "0";
+      sevEl.textContent = "Invalid Scene";
+      sevEl.style.color = "#f43f5e";
+    } else if (data.spill_detected) {
       stateEl.textContent = "SPILL DETECTED";
       stateEl.style.color = "#f43f5e";
+      confEl.textContent = `${data.overall_confidence}%`;
+      areaEl.textContent = `${data.total_area_km2} km²`;
+      slicksEl.textContent = data.slick_count;
+      sevEl.textContent = data.severity;
+      sevEl.style.color = data.severity_tone === "red" ? "#f43f5e" : data.severity_tone === "orange" ? "#fb923c" : "#10b981";
     } else {
       stateEl.textContent = "CLEAN WATER";
       stateEl.style.color = "#10b981";
+      confEl.textContent = "0%";
+      areaEl.textContent = "0.00 km²";
+      slicksEl.textContent = "0";
+      sevEl.textContent = "Clean Water";
+      sevEl.style.color = "#10b981";
     }
 
-    confEl.textContent = `${data.overall_confidence}%`;
-    areaEl.textContent = `${data.total_area_km2} km²`;
-    slicksEl.textContent = data.slick_count;
-    sevEl.textContent = data.severity;
-    sevEl.style.color = data.severity_tone === "red" ? "#f43f5e" : data.severity_tone === "orange" ? "#fb923c" : "#10b981";
-
-    // Images
     const overlayImg = document.getElementById("og-overlay-view");
     const overlayPlaceholder = document.getElementById("og-overlay-placeholder");
     const heatmapImg = document.getElementById("og-heatmap-view");
@@ -351,7 +695,6 @@
       dimLabel.textContent = `${data.image_dimensions.width} × ${data.image_dimensions.height} px`;
     }
 
-    // Stages
     const stagesList = document.getElementById("og-stages-list");
     if (data.pipeline_stages && stagesList) {
       stagesList.innerHTML = data.pipeline_stages
@@ -370,20 +713,10 @@
     }
   }
 
-  // Intercept any click on "Run detection" or buttons inside the React app if desired
-  document.addEventListener("click", (e) => {
-    const target = e.target.closest("button");
-    if (!target) return;
-    const text = target.textContent?.trim().toLowerCase();
-    if (text?.includes("run detection") || text?.includes("load sample scene")) {
-      openAiStudioModal();
-    }
-  });
-
   // Expose globally
   window.OceanGuardAI = {
     openStudio: openAiStudioModal,
-    runScenario: runScenario,
-    uploadAndDetect: uploadAndDetect,
+    runScenario: runInPageScenario,
+    processUpload: processInPageUpload,
   };
 })();
