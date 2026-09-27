@@ -200,7 +200,11 @@
     // 5. Dark Tactical Chart
     const cartoDark = L.tileLayer(
       "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-      { maxZoom: 19 }
+      { 
+        maxZoom: 19,
+        className: "og-tactical-dark-tiles",
+        attribution: "CartoDB Dark Tactical Nautical Basemap"
+      }
     );
 
     // Group Satellite Imagery with Reference
