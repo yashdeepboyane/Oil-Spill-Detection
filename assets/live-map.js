@@ -1,11 +1,13 @@
 /**
  * OceanGuard Live Marine Satellite & AIS Navigation Map
- * Replaces the schematic view with a real, live, interactive Leaflet ocean & marine map.
+ * Replaces the schematic view with a real, live, high-resolution satellite remote-sensing map.
  * Includes:
- * - Rich Deep Blue Ocean & Marine Nautical Basemap
+ * - Real Satellite Imagery (Esri World Imagery) with satellite place references
+ * - Live Sentinel-1 SAR Radar Swath Footprint & Orbital Pass Grid
+ * - Marine Nautical Bathymetry and SAR Radar Dark views
  * - Indian Standard Time (IST / ISI) clock and telemetry timestamps
  * - Deep offshore ocean coordinates (Bay of Bengal / Maritime Sector, 80 km offshore)
- * - Live pulsating Oil Spill Polygon (OS-2026-014, 12.6 km²)
+ * - Live pulsating Oil Spill Target (OS-2026-014, 12.6 km²)
  * - Live drifting AIS vessels (MV Ocean Star, Pacific Fern, Meridian Crest) with telemetry popups
  * - Real-time wind & ocean current vector overlays
  * - Maximize / Fullscreen feature to expand the map along the full screen
@@ -13,24 +15,19 @@
  */
 
 (function () {
-  console.log("OceanGuard Live Marine Map Engine initializing...");
+  console.log("OceanGuard High-Res Satellite Remote Sensing Map Engine initializing...");
 
   let activeMap = null;
   let mapLayers = {};
   let vesselMarkers = {};
   let spillLayer = null;
+  let swathLayer = null;
   let isMaximized = false;
   let vesselAnimationTimer = null;
 
   // Genuine Offshore Deep Sea Coordinates (Maritime Exclusive Economic Zone)
   const CENTER_LAT = 13.15;
   const CENTER_LNG = 81.15;
-
-  function getFormattedIST(timeStr) {
-    if (timeStr) return timeStr;
-    const d = new Date();
-    return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) + " IST";
-  }
 
   const SPILL_GEOJSON = {
     type: "Feature",
@@ -134,23 +131,23 @@
       return;
     }
 
-    console.log("Upgrading demonstrative schematic to LIVE interactive deep blue ocean map...");
+    console.log("Upgrading to High-Resolution Satellite Remote Sensing Map...");
     mapContainer.dataset.ogLiveMapActive = "true";
     mapContainer.innerHTML = ""; // Clear schematic placeholder
 
-    // Build the Live Map Wrapper with deep ocean blue background
+    // Build the Live Map Wrapper
     mapContainer.style.position = "relative";
     mapContainer.style.minHeight = "480px";
     mapContainer.style.height = "100%";
     mapContainer.style.overflow = "hidden";
     mapContainer.style.borderRadius = "16px";
-    mapContainer.style.background = "linear-gradient(180deg, #02182b 0%, #032b4d 50%, #011627 100%)";
-    mapContainer.style.border = "1px solid #0369a1";
-    mapContainer.style.boxShadow = "0 8px 32px rgba(2, 44, 77, 0.4)";
+    mapContainer.style.background = "#021220";
+    mapContainer.style.border = "1px solid #0284c7";
+    mapContainer.style.boxShadow = "0 8px 32px rgba(2, 44, 77, 0.5)";
 
     const mapDiv = document.createElement("div");
     mapDiv.id = "og-live-leaflet-map";
-    mapDiv.style.cssText = "width: 100%; height: 100%; min-height: 480px; z-index: 1; background: #032b4d;";
+    mapDiv.style.cssText = "width: 100%; height: 100%; min-height: 480px; z-index: 1; background: #021220;";
     mapContainer.appendChild(mapDiv);
 
     // Create Leaflet Map Instance
@@ -162,41 +159,52 @@
     });
 
     // Basemap tile layers:
-    // 1. Deep Blue Ocean Basemap (Rich Marine Sea Color)
-    const esriOcean = L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_OceanBase/MapServer/tile/{z}/{y}/{x}",
+    // 1. High-Resolution True-Color Satellite Imagery (Esri World Imagery)
+    const esriSatellite = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       { 
-        maxZoom: 13,
-        className: "og-deep-blue-tiles"
+        maxZoom: 19,
+        className: "og-satellite-tiles",
+        attribution: "Esri World Imagery & Sentinel Satellite Feed"
       }
     );
 
-    // 2. Dark Marine Radar View
+    // 2. High-Res Satellite Places & Reference Overlay
+    const esriReference = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+      { maxZoom: 19 }
+    );
+
+    // 3. Deep Blue Marine Ocean Basemap (Bathymetric depths & sea contours)
+    const esriOcean = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_OceanBase/MapServer/tile/{z}/{y}/{x}",
+      { maxZoom: 13 }
+    );
+
+    // 4. Dark Tactical SAR Radar View
     const cartoDark = L.tileLayer(
       "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
       { maxZoom: 19 }
     );
 
-    // 3. Open Sea Satellite Imagery
-    const esriSatellite = L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      { maxZoom: 18 }
-    );
+    // Group Satellite Imagery with Reference
+    const satelliteGroup = L.layerGroup([esriSatellite, esriReference]);
 
-    // Set Deep Blue Ocean Basemap as the default view
-    esriOcean.addTo(activeMap);
+    // Set Satellite View as the primary authentic earth view
+    satelliteGroup.addTo(activeMap);
 
+    mapLayers.satellite = satelliteGroup;
     mapLayers.ocean = esriOcean;
     mapLayers.dark = cartoDark;
-    mapLayers.satellite = esriSatellite;
 
-    // Add Live Layers (Spill, Vessels, AIS, Wind, Current)
+    // Add Live Remote Sensing Overlays (SAR Swath, Spill, Vessels, Vectors)
+    renderSatelliteSwath(activeMap);
     renderSpillPolygon(activeMap);
     renderVesselMarkers(activeMap);
     renderRouteTrajectories(activeMap);
     renderCurrentAndWind(activeMap);
 
-    // Inject Live Map UI Overlays (Header, Maximize button, Layer Toggles, Coordinates, HUD)
+    // Inject Live Map UI Overlays (Header, Satellite Telemetry HUD, Maximize button, IST Clock)
     injectMapControls(mapContainer, activeMap);
 
     // Start live vessel drift animation
@@ -206,7 +214,48 @@
     setTimeout(() => activeMap.invalidateSize(), 200);
   }
 
-  // 1. Render Oil Spill Polygon (OS-2026-014)
+  // 1. Render Satellite SAR Radar Swath Footprint & Ground Track
+  function renderSatelliteSwath(map) {
+    // Sentinel-1 IW 250km Radar Swath boundary in maritime zone
+    const swathCoordinates = [
+      [13.40, 80.90],
+      [13.35, 81.45],
+      [12.90, 81.40],
+      [12.95, 80.85],
+      [13.40, 80.90],
+    ];
+
+    swathLayer = L.polygon(swathCoordinates, {
+      color: "#00f2fe",
+      weight: 1.5,
+      opacity: 0.6,
+      fillColor: "#00f2fe",
+      fillOpacity: 0.04,
+      dashArray: "8, 8",
+    }).addTo(map);
+
+    swathLayer.bindTooltip("🛰️ Sentinel-1A SAR Imaging Swath · IW Mode (250km)", {
+      direction: "top",
+      sticky: true,
+      className: "og-satellite-tooltip",
+    });
+
+    // Sub-satellite ground track path
+    L.polyline(
+      [
+        [13.50, 81.18],
+        [12.80, 81.12],
+      ],
+      {
+        color: "#38bdf8",
+        weight: 1.5,
+        opacity: 0.5,
+        dashArray: "4, 6",
+      }
+    ).addTo(map);
+  }
+
+  // 2. Render Oil Spill Polygon (OS-2026-014)
   function renderSpillPolygon(map) {
     spillLayer = L.geoJSON(SPILL_GEOJSON, {
       style: {
@@ -220,36 +269,38 @@
       onEachFeature: (feature, layer) => {
         layer.bindPopup(`
           <div style="font-family: Inter, sans-serif; color: #0f172a; padding: 4px; min-width: 210px;">
-            <div style="font-size: 10px; font-weight: 800; color: #dc2626; text-transform: uppercase; letter-spacing: 0.5px;">Active Offshore Spill Target</div>
+            <div style="font-size: 10px; font-weight: 800; color: #dc2626; text-transform: uppercase; letter-spacing: 0.5px;">Active Satellite Spill Target</div>
             <div style="font-size: 14px; font-weight: 800; margin: 3px 0; color: #0f172a;">${feature.properties.id}</div>
             <div style="font-size: 11px; color: #475569; margin-bottom: 6px;">${feature.properties.name}</div>
             <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 8px; padding: 8px 10px; font-size: 11px; font-family: monospace; line-height: 1.6;">
               Area: <b>${feature.properties.area_km2} km²</b><br>
               Confidence: <b>${feature.properties.confidence}%</b><br>
+              Sensor: <b>Sentinel-1 C-SAR IW</b><br>
               Detected Time: <b>${feature.properties.detected_time}</b><br>
               Severity: <b style="color:#b91c1c;">${feature.properties.severity}</b><br>
-              Environment: <b style="color:#0284c7;">Deep Blue Sea (80km offshore)</b>
+              Orbit: <b>Descending Pass #142</b>
             </div>
           </div>
         `);
       },
     }).addTo(map);
 
-    // Add glowing marker on spill center
+    // Add glowing satellite reticle marker on spill center
     const spillMarkerHtml = `
-      <div style="position:relative;width:26px;height:26px;display:flex;align-items:center;justify-content:center;">
+      <div style="position:relative;width:28px;height:28px;display:flex;align-items:center;justify-content:center;">
         <span style="position:absolute;width:100%;height:100%;border-radius:50%;background:#ef4444;opacity:0.5;animation:ping 2s cubic-bezier(0,0,0.2,1) infinite;"></span>
-        <span style="position:relative;width:12px;height:12px;border-radius:50%;background:#ef4444;border:2px solid white;box-shadow:0 0 12px #ef4444;"></span>
+        <span style="position:absolute;width:24px;height:24px;border:1px dashed #ffffff;border-radius:50%;animation:spin 6s linear infinite;"></span>
+        <span style="position:relative;width:10px;height:10px;border-radius:50%;background:#ef4444;border:2px solid white;box-shadow:0 0 12px #ef4444;"></span>
       </div>
     `;
     const spillIcon = L.divIcon({
       html: spillMarkerHtml,
       className: "og-spill-pulse",
-      iconSize: [26, 26],
-      iconAnchor: [13, 13],
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
     });
     L.marker([CENTER_LAT, CENTER_LNG], { icon: spillIcon })
-      .bindTooltip("<b>OS-2026-014</b> · 12.6 km² Spill · 14:32 IST", {
+      .bindTooltip("<b>OS-2026-014</b> · 12.6 km² Satellite Target · 14:32 IST", {
         permanent: true,
         direction: "top",
         className: "og-spill-tooltip",
@@ -257,7 +308,7 @@
       .addTo(map);
   }
 
-  // 2. Render Live AIS Vessels
+  // 3. Render Live AIS Vessels
   function renderVesselMarkers(map) {
     VESSELS.forEach((vessel) => {
       const vesselHtml = `
@@ -272,13 +323,13 @@
             justify-content: center; 
             color: #032b4d; 
             border: 2px solid white;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.6);
             transform: rotate(${vessel.heading_deg}deg);
             transition: all 0.5s ease;
           ">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 19 21 12 17 5 21 12 2"></polygon></svg>
           </div>
-          <span style="background: rgba(3, 43, 77, 0.92); color: #f8fafc; font-size: 9px; font-family: monospace; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.4); white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,0.3);">
+          <span style="background: rgba(3, 43, 77, 0.94); color: #f8fafc; font-size: 9px; font-family: monospace; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.4); white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,0.4);">
             ${vessel.name}
           </span>
         </div>
@@ -314,19 +365,19 @@
     });
   }
 
-  // 3. Render Historical AIS Trajectories
+  // 4. Render Historical AIS Trajectories
   function renderRouteTrajectories(map) {
     VESSELS.forEach((v) => {
       L.polyline(v.trajectory, {
         color: v.color,
         weight: 2.5,
-        opacity: 0.7,
+        opacity: 0.75,
         dashArray: "4, 6",
       }).addTo(map);
     });
   }
 
-  // 4. Render Current and Wind Vectors
+  // 5. Render Current and Wind Vectors
   function renderCurrentAndWind(map) {
     // Surface Current Vector in offshore waters
     const currentLine = L.polyline(
@@ -354,7 +405,7 @@
     }).addTo(map);
   }
 
-  // 5. Real-time Vessel Drift Simulation
+  // 6. Real-time Vessel Drift Simulation
   function startVesselSimulation() {
     if (vesselAnimationTimer) clearInterval(vesselAnimationTimer);
 
@@ -374,7 +425,7 @@
     }, 2000);
   }
 
-  // 6. Map UI Overlays & Maximize / Fullscreen Feature
+  // 7. Map UI Overlays & Maximize / Fullscreen Feature
   function injectMapControls(container, map) {
     const controlsDiv = document.createElement("div");
     controlsDiv.className = "og-map-ui-layer";
@@ -382,10 +433,10 @@
 
     controlsDiv.innerHTML = `
       <!-- Top HUD Header -->
-      <div style="position: absolute; top: 12px; left: 12px; right: 12px; display: flex; align-items: center; justify-content: space-between; pointer-events: auto;">
-        <div style="display: flex; align-items: center; gap: 8px; background: rgba(3, 37, 65, 0.94); backdrop-filter: blur(8px); padding: 6px 14px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.4); color: white; font-family: monospace; font-size: 11px; box-shadow: 0 4px 14px rgba(0,0,0,0.3);">
-          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#38bdf8;box-shadow:0 0 8px #38bdf8;animation:pulse 2s infinite;"></span>
-          <span style="font-weight: 800; color: #38bdf8; text-transform: uppercase;">🌊 LIVE BLUE OCEAN MAP</span>
+      <div style="position: absolute; top: 12px; left: 12px; right: 12px; display: flex; align-items: center; justify-content: space-between; pointer-events: auto; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px; background: rgba(2, 18, 32, 0.94); backdrop-filter: blur(8px); padding: 6px 14px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.4); color: white; font-family: monospace; font-size: 11px; box-shadow: 0 4px 14px rgba(0,0,0,0.4);">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 8px #10b981;animation:pulse 2s infinite;"></span>
+          <span style="font-weight: 800; color: #38bdf8; text-transform: uppercase;">🛰️ SATELLITE SAR FEED (SENTINEL-1A)</span>
           <span style="color: #64748b;">|</span>
           <span id="og-map-ist-clock" style="color: #f8fafc; font-weight: 700;">--:--:-- IST</span>
         </div>
@@ -393,14 +444,14 @@
         <!-- Top Right Control Buttons -->
         <div style="display: flex; align-items: center; gap: 8px;">
           <!-- Basemap Switcher -->
-          <div style="background: rgba(3, 37, 65, 0.94); backdrop-filter: blur(8px); padding: 4px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.3); display: flex; gap: 4px;">
-            <button id="og-btn-ocean" style="background: #0284c7; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🌊 Blue Ocean</button>
-            <button id="og-btn-dark" style="background: transparent; color: #94a3b8; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🌑 Nautical Dark</button>
-            <button id="og-btn-satellite" style="background: transparent; color: #94a3b8; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🛰️ Satellite</button>
+          <div style="background: rgba(2, 18, 32, 0.94); backdrop-filter: blur(8px); padding: 4px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.3); display: flex; gap: 4px;">
+            <button id="og-btn-satellite" style="background: #0284c7; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🛰️ Satellite</button>
+            <button id="og-btn-ocean" style="background: transparent; color: #94a3b8; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🌊 Marine Ocean</button>
+            <button id="og-btn-dark" style="background: transparent; color: #94a3b8; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🌑 SAR Radar</button>
           </div>
 
           <!-- Re-center button -->
-          <button id="og-btn-recenter" style="background: rgba(3, 37, 65, 0.94); backdrop-filter: blur(8px); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 6px 12px; border-radius: 10px; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 4px;" title="Center on Spill Incident">
+          <button id="og-btn-recenter" style="background: rgba(2, 18, 32, 0.94); backdrop-filter: blur(8px); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 6px 12px; border-radius: 10px; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 4px;" title="Center on Satellite Spill Target">
             <span>🎯</span>
             <span class="hidden sm:inline">Target Spill</span>
           </button>
@@ -427,13 +478,14 @@
         </div>
       </div>
 
-      <!-- Bottom Bar: Coordinates, Telemetry & Zoom -->
-      <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(2, 27, 49, 0.95); backdrop-filter: blur(10px); border-top: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-family: monospace; font-size: 10px; color: #94a3b8; pointer-events: auto;">
-        <div style="display: flex; align-items: center; gap: 14px;">
-          <span style="color: #38bdf8; font-weight: 700;">🌊 DEEP BLUE SEA AIS / SAR FEED</span>
+      <!-- Bottom Bar: Coordinates, Satellite Telemetry & Zoom -->
+      <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(2, 18, 32, 0.96); backdrop-filter: blur(10px); border-top: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-family: monospace; font-size: 10px; color: #94a3b8; pointer-events: auto; flex-wrap: wrap; gap: 6px;">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <span style="color: #38bdf8; font-weight: 700;">🛰️ SATELLITE SAR OVERPASS</span>
           <span id="og-cursor-coords">13.150° N · 81.150° E</span>
           <span style="color: #64748b;">|</span>
-          <span style="color: #38bdf8;">3 Vessels Active</span>
+          <span style="color: #00f2fe;">Swath: IW 250km (VV+VH)</span>
+          <span style="color: #38bdf8;">3 AIS Vessels</span>
           <span style="color: #ef4444; font-weight: 700;">1 Active Spill (OS-2026-014)</span>
         </div>
 
@@ -479,29 +531,13 @@
     };
 
     // Basemap Switchers
+    const btnSat = document.getElementById("og-btn-satellite");
     const btnOcean = document.getElementById("og-btn-ocean");
     const btnDark = document.getElementById("og-btn-dark");
-    const btnSat = document.getElementById("og-btn-satellite");
 
     function setLayer(selected) {
-      [mapLayers.ocean, mapLayers.dark, mapLayers.satellite].forEach((l) => map.removeLayer(l));
-      if (selected === "ocean") {
-        map.addLayer(mapLayers.ocean);
-        btnOcean.style.background = "#0284c7";
-        btnOcean.style.color = "white";
-        btnDark.style.background = "transparent";
-        btnDark.style.color = "#94a3b8";
-        btnSat.style.background = "transparent";
-        btnSat.style.color = "#94a3b8";
-      } else if (selected === "dark") {
-        map.addLayer(mapLayers.dark);
-        btnDark.style.background = "#0284c7";
-        btnDark.style.color = "white";
-        btnOcean.style.background = "transparent";
-        btnOcean.style.color = "#94a3b8";
-        btnSat.style.background = "transparent";
-        btnSat.style.color = "#94a3b8";
-      } else if (selected === "satellite") {
+      [mapLayers.satellite, mapLayers.ocean, mapLayers.dark].forEach((l) => map.removeLayer(l));
+      if (selected === "satellite") {
         map.addLayer(mapLayers.satellite);
         btnSat.style.background = "#0284c7";
         btnSat.style.color = "white";
@@ -509,12 +545,28 @@
         btnOcean.style.color = "#94a3b8";
         btnDark.style.background = "transparent";
         btnDark.style.color = "#94a3b8";
+      } else if (selected === "ocean") {
+        map.addLayer(mapLayers.ocean);
+        btnOcean.style.background = "#0284c7";
+        btnOcean.style.color = "white";
+        btnSat.style.background = "transparent";
+        btnSat.style.color = "#94a3b8";
+        btnDark.style.background = "transparent";
+        btnDark.style.color = "#94a3b8";
+      } else if (selected === "dark") {
+        map.addLayer(mapLayers.dark);
+        btnDark.style.background = "#0284c7";
+        btnDark.style.color = "white";
+        btnSat.style.background = "transparent";
+        btnSat.style.color = "#94a3b8";
+        btnOcean.style.background = "transparent";
+        btnOcean.style.color = "#94a3b8";
       }
     }
 
+    btnSat.onclick = () => setLayer("satellite");
     btnOcean.onclick = () => setLayer("ocean");
     btnDark.onclick = () => setLayer("dark");
-    btnSat.onclick = () => setLayer("satellite");
 
     // Maximize / Fullscreen Action Handler
     const maxBtn = document.getElementById("og-btn-maximize");

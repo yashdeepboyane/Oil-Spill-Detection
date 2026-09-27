@@ -15,14 +15,27 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
       .leaflet-container {
-        background-color: #032b4d !important;
+        background-color: #021220 !important;
       }
-      .og-deep-blue-tiles {
-        filter: brightness(0.92) contrast(1.15) saturate(1.4) hue-rotate(-5deg);
+      .og-satellite-tiles {
+        filter: brightness(1.04) contrast(1.08) saturate(1.15);
       }
       .leaflet-popup-content-wrapper {
         border-radius: 12px;
         box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+      }
+      .og-spill-tooltip {
+        background: rgba(15, 23, 42, 0.92) !important;
+        border: 1px solid #ef4444 !important;
+        color: #ffffff !important;
+        font-family: ui-monospace, SFMono-Regular, monospace !important;
+        font-size: 10px !important;
+        border-radius: 6px !important;
+        padding: 4px 8px !important;
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3) !important;
+      }
+      .og-spill-tooltip:before {
+        border-top-color: #ef4444 !important;
       }
     </style>
   </head>
