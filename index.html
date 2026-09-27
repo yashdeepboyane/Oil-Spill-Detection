@@ -20,6 +20,23 @@
       .og-satellite-tiles {
         filter: brightness(1.04) contrast(1.08) saturate(1.15);
       }
+      .og-sar-radar-tiles {
+        filter: grayscale(100%) brightness(0.85) contrast(1.75) invert(5%);
+      }
+      .og-deep-blue-tiles {
+        filter: brightness(0.92) contrast(1.15) saturate(1.4) hue-rotate(-5deg);
+      }
+      @keyframes ogRadarSpin {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .og-radar-sweep {
+        transition: opacity 0.3s ease;
+      }
       .leaflet-popup-content-wrapper {
         border-radius: 12px;
         box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);

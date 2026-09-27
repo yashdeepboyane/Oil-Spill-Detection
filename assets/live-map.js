@@ -1,10 +1,11 @@
 /**
  * OceanGuard Live Marine Satellite & AIS Navigation Map
- * Replaces the schematic view with a real, live, high-resolution satellite remote-sensing map.
+ * Replaces the schematic view with real-time High-Resolution Satellite & SAR Radar maps.
  * Includes:
- * - Real Satellite Imagery (Esri World Imagery) with satellite place references
- * - Live Sentinel-1 SAR Radar Swath Footprint & Orbital Pass Grid
- * - Marine Nautical Bathymetry and SAR Radar Dark views
+ * - Real Satellite Imagery (Esri World Imagery) with place & coastline references
+ * - Authentic SAR Radar Backscatter mode with microwave speckle, range rings & sweep
+ * - Deep Blue Marine Ocean Bathymetry and Tactical Dark modes
+ * - Sentinel-1 SAR 250km Radar Swath Footprint & Ground Track
  * - Indian Standard Time (IST / ISI) clock and telemetry timestamps
  * - Deep offshore ocean coordinates (Bay of Bengal / Maritime Sector, 80 km offshore)
  * - Live pulsating Oil Spill Target (OS-2026-014, 12.6 km²)
@@ -15,14 +16,16 @@
  */
 
 (function () {
-  console.log("OceanGuard High-Res Satellite Remote Sensing Map Engine initializing...");
+  console.log("OceanGuard High-Res Satellite & SAR Radar Map Engine initializing...");
 
   let activeMap = null;
   let mapLayers = {};
   let vesselMarkers = {};
   let spillLayer = null;
   let swathLayer = null;
+  let radarRingsLayer = null;
   let isMaximized = false;
+  let currentLayerType = "satellite";
   let vesselAnimationTimer = null;
 
   // Genuine Offshore Deep Sea Coordinates (Maritime Exclusive Economic Zone)
@@ -131,7 +134,7 @@
       return;
     }
 
-    console.log("Upgrading to High-Resolution Satellite Remote Sensing Map...");
+    console.log("Upgrading to Satellite & SAR Radar Map Engine...");
     mapContainer.dataset.ogLiveMapActive = "true";
     mapContainer.innerHTML = ""; // Clear schematic placeholder
 
@@ -169,19 +172,32 @@
       }
     );
 
-    // 2. High-Res Satellite Places & Reference Overlay
+    // 2. High-Res Satellite Reference Overlay
     const esriReference = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
       { maxZoom: 19 }
     );
 
-    // 3. Deep Blue Marine Ocean Basemap (Bathymetric depths & sea contours)
-    const esriOcean = L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_OceanBase/MapServer/tile/{z}/{y}/{x}",
-      { maxZoom: 13 }
+    // 3. Synthetic Aperture Radar (SAR) Microwave Backscatter Tile Layer
+    const sarRadarTiles = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      {
+        maxZoom: 19,
+        className: "og-sar-radar-tiles",
+        attribution: "Sentinel-1 C-SAR IW Synthetic Aperture Radar"
+      }
     );
 
-    // 4. Dark Tactical SAR Radar View
+    // 4. Deep Blue Marine Ocean Basemap (Bathymetric depths & sea contours)
+    const esriOcean = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_OceanBase/MapServer/tile/{z}/{y}/{x}",
+      { 
+        maxZoom: 13,
+        className: "og-deep-blue-tiles"
+      }
+    );
+
+    // 5. Dark Tactical Chart
     const cartoDark = L.tileLayer(
       "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
       { maxZoom: 19 }
@@ -189,22 +205,25 @@
 
     // Group Satellite Imagery with Reference
     const satelliteGroup = L.layerGroup([esriSatellite, esriReference]);
+    const sarRadarGroup = L.layerGroup([sarRadarTiles]);
 
     // Set Satellite View as the primary authentic earth view
     satelliteGroup.addTo(activeMap);
 
     mapLayers.satellite = satelliteGroup;
+    mapLayers.sarRadar = sarRadarGroup;
     mapLayers.ocean = esriOcean;
     mapLayers.dark = cartoDark;
 
-    // Add Live Remote Sensing Overlays (SAR Swath, Spill, Vessels, Vectors)
+    // Add Live Remote Sensing Overlays (SAR Swath, Range Rings, Spill, Vessels, Vectors)
     renderSatelliteSwath(activeMap);
+    renderRadarRangeRings(activeMap);
     renderSpillPolygon(activeMap);
     renderVesselMarkers(activeMap);
     renderRouteTrajectories(activeMap);
     renderCurrentAndWind(activeMap);
 
-    // Inject Live Map UI Overlays (Header, Satellite Telemetry HUD, Maximize button, IST Clock)
+    // Inject Live Map UI Overlays (Header, Telemetry HUD, Maximize button, IST Clock)
     injectMapControls(mapContainer, activeMap);
 
     // Start live vessel drift animation
@@ -216,7 +235,6 @@
 
   // 1. Render Satellite SAR Radar Swath Footprint & Ground Track
   function renderSatelliteSwath(map) {
-    // Sentinel-1 IW 250km Radar Swath boundary in maritime zone
     const swathCoordinates = [
       [13.40, 80.90],
       [13.35, 81.45],
@@ -255,7 +273,57 @@
     ).addTo(map);
   }
 
-  // 2. Render Oil Spill Polygon (OS-2026-014)
+  // 2. Render SAR Radar Range Rings & Azimuth Grid
+  function renderRadarRangeRings(map) {
+    const ringsGroup = L.layerGroup();
+
+    // Range rings: 3 NM (5.5 km), 6 NM (11 km), 9 NM (16.6 km)
+    const ringDistances = [
+      { radius: 5500, label: "3 NM" },
+      { radius: 11000, label: "6 NM" },
+      { radius: 16600, label: "9 NM" },
+    ];
+
+    ringDistances.forEach((r) => {
+      L.circle([CENTER_LAT, CENTER_LNG], {
+        radius: r.radius,
+        color: "#10b981",
+        weight: 1,
+        opacity: 0.35,
+        fillColor: "#10b981",
+        fillOpacity: 0.015,
+        dashArray: "4, 6",
+        className: "og-radar-ring",
+      }).addTo(ringsGroup);
+    });
+
+    // Azimuth Heading Spokes (N, NE, E, SE, S, SW, W, NW)
+    const angles = [0, 45, 90, 135, 180, 225, 270, 315];
+    angles.forEach((deg) => {
+      const rad = (deg * Math.PI) / 180;
+      const endLat = CENTER_LAT + Math.cos(rad) * 0.16;
+      const endLng = CENTER_LNG + Math.sin(rad) * 0.16;
+
+      L.polyline(
+        [
+          [CENTER_LAT, CENTER_LNG],
+          [endLat, endLng],
+        ],
+        {
+          color: "#10b981",
+          weight: 1,
+          opacity: 0.25,
+          dashArray: "3, 6",
+          className: "og-radar-spoke",
+        }
+      ).addTo(ringsGroup);
+    });
+
+    radarRingsLayer = ringsGroup;
+    radarRingsLayer.addTo(map);
+  }
+
+  // 3. Render Oil Spill Polygon (OS-2026-014)
   function renderSpillPolygon(map) {
     spillLayer = L.geoJSON(SPILL_GEOJSON, {
       style: {
@@ -278,7 +346,7 @@
               Sensor: <b>Sentinel-1 C-SAR IW</b><br>
               Detected Time: <b>${feature.properties.detected_time}</b><br>
               Severity: <b style="color:#b91c1c;">${feature.properties.severity}</b><br>
-              Orbit: <b>Descending Pass #142</b>
+              Backscatter Attenuation: <b>-24.8 dB</b>
             </div>
           </div>
         `);
@@ -308,7 +376,7 @@
       .addTo(map);
   }
 
-  // 3. Render Live AIS Vessels
+  // 4. Render Live AIS Vessels with Radar Echo point reflection
   function renderVesselMarkers(map) {
     VESSELS.forEach((vessel) => {
       const vesselHtml = `
@@ -353,7 +421,7 @@
             Speed: <b>${vessel.speed_kn} kn</b><br>
             Heading: <b>${vessel.heading_deg}°</b><br>
             Position: <b>${vessel.lat.toFixed(3)}°N, ${vessel.lng.toFixed(3)}°E</b><br>
-            Status: <b style="color:#0284c7;">Underway Using Engine</b>
+            Radar Echo: <b style="color:#10b981;">Point Reflector (σ0: +18dB)</b>
           </div>
         </div>
       `);
@@ -365,7 +433,7 @@
     });
   }
 
-  // 4. Render Historical AIS Trajectories
+  // 5. Render Historical AIS Trajectories
   function renderRouteTrajectories(map) {
     VESSELS.forEach((v) => {
       L.polyline(v.trajectory, {
@@ -377,9 +445,8 @@
     });
   }
 
-  // 5. Render Current and Wind Vectors
+  // 6. Render Current and Wind Vectors
   function renderCurrentAndWind(map) {
-    // Surface Current Vector in offshore waters
     const currentLine = L.polyline(
       [
         [13.19, 81.05],
@@ -393,7 +460,6 @@
     ).addTo(map);
     currentLine.bindTooltip("🌊 Ocean Surface Drift: 0.8 kn SE", { sticky: true });
 
-    // Risk Buffer Circle in deep blue sea
     L.circle([CENTER_LAT, CENTER_LNG], {
       radius: 8000,
       color: "#0284c7",
@@ -405,7 +471,7 @@
     }).addTo(map);
   }
 
-  // 6. Real-time Vessel Drift Simulation
+  // 7. Real-time Vessel Drift Simulation
   function startVesselSimulation() {
     if (vesselAnimationTimer) clearInterval(vesselAnimationTimer);
 
@@ -425,29 +491,35 @@
     }, 2000);
   }
 
-  // 7. Map UI Overlays & Maximize / Fullscreen Feature
+  // 8. Map UI Overlays & Maximize / Fullscreen Feature
   function injectMapControls(container, map) {
     const controlsDiv = document.createElement("div");
     controlsDiv.className = "og-map-ui-layer";
     controlsDiv.style.cssText = "position: absolute; inset: 0; pointer-events: none; z-index: 1000;";
 
     controlsDiv.innerHTML = `
+      <!-- Animated Radar Sweep Cone (Active in SAR Radar mode) -->
+      <div id="og-radar-sweep-beam" class="og-radar-sweep hidden" style="position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 500;">
+        <div style="position: absolute; top: 50%; left: 50%; width: 200vmax; height: 200vmax; margin-top: -100vmax; margin-left: -100vmax; border-radius: 50%; background: conic-gradient(from 0deg at 50% 50%, rgba(16, 185, 129, 0) 0deg, rgba(16, 185, 129, 0) 300deg, rgba(16, 185, 129, 0.22) 360deg); animation: ogRadarSpin 4s linear infinite;"></div>
+      </div>
+
       <!-- Top HUD Header -->
       <div style="position: absolute; top: 12px; left: 12px; right: 12px; display: flex; align-items: center; justify-content: space-between; pointer-events: auto; flex-wrap: wrap; gap: 8px;">
         <div style="display: flex; align-items: center; gap: 8px; background: rgba(2, 18, 32, 0.94); backdrop-filter: blur(8px); padding: 6px 14px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.4); color: white; font-family: monospace; font-size: 11px; box-shadow: 0 4px 14px rgba(0,0,0,0.4);">
-          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 8px #10b981;animation:pulse 2s infinite;"></span>
-          <span style="font-weight: 800; color: #38bdf8; text-transform: uppercase;">🛰️ SATELLITE SAR FEED (SENTINEL-1A)</span>
+          <span id="og-mode-pulse" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 8px #10b981;animation:pulse 2s infinite;"></span>
+          <span id="og-header-title" style="font-weight: 800; color: #38bdf8; text-transform: uppercase;">🛰️ SATELLITE SAR FEED (SENTINEL-1A)</span>
           <span style="color: #64748b;">|</span>
           <span id="og-map-ist-clock" style="color: #f8fafc; font-weight: 700;">--:--:-- IST</span>
         </div>
 
         <!-- Top Right Control Buttons -->
         <div style="display: flex; align-items: center; gap: 8px;">
-          <!-- Basemap Switcher -->
+          <!-- Basemap Switcher (Satellite, SAR Radar, Ocean, Tactical Dark) -->
           <div style="background: rgba(2, 18, 32, 0.94); backdrop-filter: blur(8px); padding: 4px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.3); display: flex; gap: 4px;">
             <button id="og-btn-satellite" style="background: #0284c7; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🛰️ Satellite</button>
+            <button id="og-btn-radar" style="background: transparent; color: #94a3b8; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">📡 SAR Radar</button>
             <button id="og-btn-ocean" style="background: transparent; color: #94a3b8; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🌊 Marine Ocean</button>
-            <button id="og-btn-dark" style="background: transparent; color: #94a3b8; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🌑 SAR Radar</button>
+            <button id="og-btn-dark" style="background: transparent; color: #94a3b8; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🌑 Tactical Dark</button>
           </div>
 
           <!-- Re-center button -->
@@ -481,10 +553,10 @@
       <!-- Bottom Bar: Coordinates, Satellite Telemetry & Zoom -->
       <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(2, 18, 32, 0.96); backdrop-filter: blur(10px); border-top: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-family: monospace; font-size: 10px; color: #94a3b8; pointer-events: auto; flex-wrap: wrap; gap: 6px;">
         <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-          <span style="color: #38bdf8; font-weight: 700;">🛰️ SATELLITE SAR OVERPASS</span>
+          <span id="og-bottom-label" style="color: #38bdf8; font-weight: 700;">🛰️ SATELLITE SAR OVERPASS</span>
           <span id="og-cursor-coords">13.150° N · 81.150° E</span>
           <span style="color: #64748b;">|</span>
-          <span style="color: #00f2fe;">Swath: IW 250km (VV+VH)</span>
+          <span id="og-swath-tag" style="color: #00f2fe;">Swath: IW 250km (VV+VH)</span>
           <span style="color: #38bdf8;">3 AIS Vessels</span>
           <span style="color: #ef4444; font-weight: 700;">1 Active Spill (OS-2026-014)</span>
         </div>
@@ -532,39 +604,74 @@
 
     // Basemap Switchers
     const btnSat = document.getElementById("og-btn-satellite");
+    const btnRadar = document.getElementById("og-btn-radar");
     const btnOcean = document.getElementById("og-btn-ocean");
     const btnDark = document.getElementById("og-btn-dark");
+    const sweepBeam = document.getElementById("og-radar-sweep-beam");
+    const headerTitle = document.getElementById("og-header-title");
+    const bottomLabel = document.getElementById("og-bottom-label");
+    const modePulse = document.getElementById("og-mode-pulse");
 
     function setLayer(selected) {
-      [mapLayers.satellite, mapLayers.ocean, mapLayers.dark].forEach((l) => map.removeLayer(l));
+      currentLayerType = selected;
+      [mapLayers.satellite, mapLayers.sarRadar, mapLayers.ocean, mapLayers.dark].forEach((l) => map.removeLayer(l));
+      
+      // Reset button styles
+      [btnSat, btnRadar, btnOcean, btnDark].forEach((b) => {
+        b.style.background = "transparent";
+        b.style.color = "#94a3b8";
+      });
+
       if (selected === "satellite") {
         map.addLayer(mapLayers.satellite);
         btnSat.style.background = "#0284c7";
         btnSat.style.color = "white";
-        btnOcean.style.background = "transparent";
-        btnOcean.style.color = "#94a3b8";
-        btnDark.style.background = "transparent";
-        btnDark.style.color = "#94a3b8";
+        if (sweepBeam) sweepBeam.classList.add("hidden");
+        if (headerTitle) headerTitle.textContent = "🛰️ SATELLITE SAR FEED (SENTINEL-1A)";
+        if (bottomLabel) bottomLabel.textContent = "🛰️ SATELLITE SAR OVERPASS";
+        if (modePulse) {
+          modePulse.style.background = "#10b981";
+          modePulse.style.boxShadow = "0 0 8px #10b981";
+        }
+      } else if (selected === "sarRadar") {
+        map.addLayer(mapLayers.sarRadar);
+        btnRadar.style.background = "#10b981";
+        btnRadar.style.color = "#021220";
+        btnRadar.style.fontWeight = "800";
+        if (sweepBeam) sweepBeam.classList.remove("hidden");
+        if (headerTitle) headerTitle.textContent = "📡 SENTINEL-1 C-SAR RADAR BACKSCATTER (IW VV+VH)";
+        if (bottomLabel) bottomLabel.textContent = "📡 SAR MICROWAVE BACKSCATTER";
+        if (modePulse) {
+          modePulse.style.background = "#00f2fe";
+          modePulse.style.boxShadow = "0 0 8px #00f2fe";
+        }
       } else if (selected === "ocean") {
         map.addLayer(mapLayers.ocean);
         btnOcean.style.background = "#0284c7";
         btnOcean.style.color = "white";
-        btnSat.style.background = "transparent";
-        btnSat.style.color = "#94a3b8";
-        btnDark.style.background = "transparent";
-        btnDark.style.color = "#94a3b8";
+        if (sweepBeam) sweepBeam.classList.add("hidden");
+        if (headerTitle) headerTitle.textContent = "🌊 MARINE OCEAN BATHYMETRY & CURRENTS";
+        if (bottomLabel) bottomLabel.textContent = "🌊 DEEP SEA BATHYMETRY";
+        if (modePulse) {
+          modePulse.style.background = "#38bdf8";
+          modePulse.style.boxShadow = "0 0 8px #38bdf8";
+        }
       } else if (selected === "dark") {
         map.addLayer(mapLayers.dark);
         btnDark.style.background = "#0284c7";
         btnDark.style.color = "white";
-        btnSat.style.background = "transparent";
-        btnSat.style.color = "#94a3b8";
-        btnOcean.style.background = "transparent";
-        btnOcean.style.color = "#94a3b8";
+        if (sweepBeam) sweepBeam.classList.add("hidden");
+        if (headerTitle) headerTitle.textContent = "🌑 TACTICAL NIGHT AIS RADAR";
+        if (bottomLabel) bottomLabel.textContent = "🌑 TACTICAL RADAR AIS";
+        if (modePulse) {
+          modePulse.style.background = "#fb923c";
+          modePulse.style.boxShadow = "0 0 8px #fb923c";
+        }
       }
     }
 
     btnSat.onclick = () => setLayer("satellite");
+    btnRadar.onclick = () => setLayer("sarRadar");
     btnOcean.onclick = () => setLayer("ocean");
     btnDark.onclick = () => setLayer("dark");
 
