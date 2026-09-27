@@ -11,7 +11,9 @@ import numpy as np
 import base64
 import math
 from typing import Dict, List, Any, Tuple, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+IST_TZ = timezone(timedelta(hours=5, minutes=30))
 
 
 class OilSpillDetector:
@@ -89,7 +91,7 @@ class OilSpillDetector:
         img = self._bytes_to_cv2(image_bytes)
         height, width = img.shape[:2]
         total_pixels = height * width
-        now_utc = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        now_ist = datetime.now(IST_TZ).strftime("%H:%M IST")
 
         # Convert to grayscale for radar / intensity analysis
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -122,7 +124,8 @@ class OilSpillDetector:
                 ],
                 "processed_overlay_image": self._cv2_to_base64_png(invalid_img),
                 "heatmap_image": self._cv2_to_base64_png(invalid_img),
-                "detection_time_utc": now_utc,
+                "detection_time_ist": now_ist,
+                "detection_time_utc": now_ist,
                 "timestamp_utc": datetime.now(timezone.utc).isoformat()
             }
 
@@ -138,145 +141,118 @@ class OilSpillDetector:
         # In SAR, oil slicks cause specular reflection away from satellite -> dark patches
         otsu_thresh, _ = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         adaptive_thresh = cv2.adaptiveThreshold(
-            denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY_INV, blockSize=41, C=6
+            denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 45, 8
         )
+
+        # Statistical thresholding: pixels below ambient sea mean minus k*std
+        sea_mean = float(np.mean(denoised))
+        sea_std = float(np.std(denoised))
+        dark_threshold = max(20, sea_mean - (0.85 * sea_std))
+        _, stat_thresh = cv2.threshold(denoised, int(dark_threshold), 255, cv2.THRESH_BINARY_INV)
+
+        # Combine segmentation masks
+        combined_mask = cv2.bitwise_and(adaptive_thresh, stat_thresh)
+
+        # Stage 5: Morphological Filtering (Eliminate isolated speckles)
+        kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        cleaned_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel_open)
+        cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel_close)
+
+        # Stage 6: Contour Extraction, Geometry & Telemetry Calculations
+        contours, hierarchy = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Binary mask fusion
-        binary_mask = cv2.bitwise_and(adaptive_thresh, (denoised < max(otsu_thresh - 5, 40)).astype(np.uint8) * 255)
-
-        # Morphological operations: remove speckle noise and bridge internal gaps
-        kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        cleaned_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel_clean)
-        kernel_bridge = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel_bridge)
-
-        # Stage 5: Contour Extraction and Morphological Analysis
-        contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        # Surrounding sea background mean intensity
-        sea_background_intensity = float(np.mean(gray))
-
         detected_slicks: List[Dict[str, Any]] = []
-        total_spill_area_px = 0
-        total_spill_perimeter_px = 0.0
-
-        # Create overlay visualization
+        total_slick_pixels = 0
+        
+        # Color visualization canvas
         overlay = img.copy()
         mask_colored = np.zeros_like(img)
+        
+        # Heatmap calculation based on backscatter attenuation
+        # Inverse normalize: darker pixels = higher damping intensity
+        norm_attenuation = 255 - contrast_eq
+        heatmap_raw = cv2.applyColorMap(norm_attenuation, cv2.COLORMAP_INFERNO)
 
-        # Heatmap based on intensity deficit (darker = thicker / higher attenuation)
-        intensity_deficit = np.clip(255 - gray, 0, 255).astype(np.uint8)
-        heatmap_raw = cv2.applyColorMap(intensity_deficit, cv2.COLORMAP_INFERNO)
+        sea_background_intensity = sea_mean
 
-        min_slick_area_px = max(40, int(total_pixels * 0.0002))
-        max_slick_area_px = int(total_pixels * 0.70)  # avoid entire image landmass
-
-        for idx, cnt in enumerate(contours):
+        for i, cnt in enumerate(contours):
             area_px = cv2.contourArea(cnt)
-            if area_px < min_slick_area_px or area_px > max_slick_area_px:
+            if area_px < 35:  # Ignore tiny noise artifacts
                 continue
 
             perimeter_px = cv2.arcLength(cnt, True)
-            if perimeter_px == 0:
-                continue
-
-            x, y, w, h = cv2.boundingRect(cnt)
             
-            # Rotated bounding rectangle for elongation and heading
-            rect = cv2.minAreaRect(cnt)
-            (cx, cy), (rw, rh), angle = rect
-            length = max(rw, rh)
-            width_dim = max(min(rw, rh), 1.0)
-            elongation = float(length / width_dim)
+            # Geometry metrics
+            area_km2 = round(area_px * pixel_area_km2, 3)
+            perimeter_km = round(perimeter_px * (gsd / 1000.0), 3)
 
-            # Compactness / Circularity: 4 * pi * Area / Perimeter^2
-            compactness = float((4 * math.pi * area_px) / (perimeter_px ** 2)) if perimeter_px > 0 else 0.0
+            # Bounding box & Aspect / Elongation Ratio
+            x, y, w, h = cv2.boundingRect(cnt)
+            aspect_ratio = float(w) / h if h > 0 else 1.0
+            elongation = max(aspect_ratio, 1.0 / aspect_ratio) if aspect_ratio > 0 else 1.0
 
-            # Pixel intensities inside slick
+            # Mean interior backscatter intensity
             slick_mask_single = np.zeros((height, width), dtype=np.uint8)
             cv2.drawContours(slick_mask_single, [cnt], -1, 255, -1)
-            slick_mean = float(cv2.mean(gray, mask=slick_mask_single)[0])
+            mean_intensity = float(cv2.mean(denoised, mask=slick_mask_single)[0])
 
-            # Contrast ratio: sea / slick (higher ratio = darker slick relative to ocean)
-            contrast_ratio = float(sea_background_intensity / max(slick_mean, 1.0))
+            # Contrast ratio: sea_mean / slick_mean (typical oil slick is 2x to 5x darker)
+            contrast_ratio = round(sea_background_intensity / max(mean_intensity, 1.0), 2)
 
-            # Texture standard deviation inside slick (slicks are smooth, low std)
-            slick_pixels = gray[slick_mask_single == 255]
-            texture_std = float(np.std(slick_pixels)) if len(slick_pixels) > 0 else 0.0
+            # Look-alike discrimination & Confidence Score Calculation
+            # Oil exhibits high contrast with ambient sea and elongated drift geometry
+            confidence = 50.0
+            if contrast_ratio > 1.4:
+                confidence += min(30.0, (contrast_ratio - 1.4) * 20.0)
+            if elongation > 1.8:
+                confidence += min(15.0, (elongation - 1.8) * 4.0)
+            if area_km2 > 0.05:
+                confidence += 5.0
 
-            # Calculate Confidence Score (0-100%)
-            c_score = min(30.0, max(0.0, (contrast_ratio - 1.1) * 35.0))
-            e_score = min(30.0, max(5.0, elongation * 5.0)) if compactness < 0.6 else 8.0
-            t_score = min(20.0, max(0.0, (40.0 - texture_std) * 0.5))
-            b_score = min(20.0, math.log10(max(area_px, 10)) * 5.0)
+            confidence = min(98.0, max(20.0, round(confidence, 1)))
 
-            raw_confidence = c_score + e_score + t_score + b_score
-            confidence = round(min(98.5, max(12.0, raw_confidence)), 1)
+            if confidence >= confidence_threshold:
+                detected_slicks.append({
+                    "id": len(detected_slicks) + 1,
+                    "area_km2": area_km2,
+                    "area_pixels": int(area_px),
+                    "perimeter_km": perimeter_km,
+                    "elongation_ratio": round(elongation, 2),
+                    "contrast_ratio": contrast_ratio,
+                    "confidence_pct": confidence,
+                    "bbox": {"x": int(x), "y": int(y), "w": int(w), "h": int(h)}
+                })
+                total_slick_pixels += int(area_px)
 
-            if confidence < confidence_threshold:
-                continue
+                # Draw contour on overlay (Electric Cyan outline with Red Fill)
+                cv2.drawContours(mask_colored, [cnt], -1, (30, 40, 230), -1)  # Red fill
+                cv2.drawContours(overlay, [cnt], -1, (240, 230, 0), 2)         # Cyan border
 
-            area_km2 = round(area_px * pixel_area_km2, 4)
-            perimeter_km = round(perimeter_px * (gsd / 1000.0), 3)
-            total_spill_area_px += area_px
-            total_spill_perimeter_px += perimeter_px
+                # Label on slick
+                label = f"Slick #{len(detected_slicks)}: {area_km2}km2 ({confidence:.0f}%)"
+                cv2.putText(overlay, label, (x, max(18, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
 
-            # Draw on mask colored (Neon Coral / Red for detected oil)
-            cv2.drawContours(mask_colored, [cnt], -1, (40, 50, 245), -1)
-            cv2.drawContours(overlay, [cnt], -1, (20, 20, 255), 2)
+        # Blend mask with overlay
+        overlay = cv2.addWeighted(overlay, 0.85, mask_colored, 0.40, 0)
 
-            # Draw minimal oriented box
-            box = cv2.boxPoints(rect)
-            box = np.intp(box)
-            cv2.polylines(overlay, [box], True, (0, 220, 255), 1)
-
-            # Label on overlay
-            label = f"Slick #{len(detected_slicks)+1} ({confidence}%)"
-            cv2.putText(overlay, label, (x, max(y - 8, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 240, 255), 1, cv2.LINE_AA)
-
-            detected_slicks.append({
-                "id": len(detected_slicks) + 1,
-                "confidence_pct": confidence,
-                "area_px": int(area_px),
-                "area_km2": area_km2,
-                "perimeter_km": perimeter_km,
-                "elongation_ratio": round(elongation, 2),
-                "compactness": round(compactness, 3),
-                "mean_intensity": round(slick_mean, 1),
-                "contrast_ratio": round(contrast_ratio, 2),
-                "texture_std": round(texture_std, 2),
-                "bounding_box": {"x": int(x), "y": int(y), "w": int(w), "h": int(h)},
-                "centroid": {"x": int(cx), "y": int(cy)},
-                "drift_angle_deg": round(angle, 1)
-            })
-
-        # Blend semi-transparent slick color into overlay
-        alpha = 0.35
-        cv2.addWeighted(mask_colored, alpha, overlay, 1.0 - alpha, 0, overlay)
-
-        # Telemetry calculations
-        total_area_km2 = round(total_spill_area_px * pixel_area_km2, 3)
-        total_perimeter_km = round(total_spill_perimeter_px * (gsd / 1000.0), 2)
-        spill_detected = len(detected_slicks) > 0
-
+        total_area_km2 = round(total_slick_pixels * pixel_area_km2, 2)
+        total_perimeter_km = round(sum(s["perimeter_km"] for s in detected_slicks), 2)
+        spill_detected = len(detected_slicks) > 0 and total_area_km2 > 0.01
+        
         avg_confidence = (
             round(sum(s["confidence_pct"] for s in detected_slicks) / len(detected_slicks), 1)
-            if spill_detected else 0.0
+            if detected_slicks else 0.0
         )
 
-        # Dynamic Severity ranking
+        # Determine Severity and Dynamic Analyst Note
         if not spill_detected:
-            severity = "Clean Water"
+            severity = "Clean Sea"
             severity_tone = "green"
-            analyst_note = f"Scan completed on {width}×{height} px frame. Sea surface backscatter is uniform with no anomalous capillary wave damping detected (0.00 km²). Water surface is clear of oil slicks."
-        elif total_area_km2 < 0.5:
-            severity = "Minor Anomaly"
-            severity_tone = "blue"
-            analyst_note = f"Identified {len(detected_slicks)} localized surface anomaly covering {total_area_km2} km² with {avg_confidence}% confidence. Low environmental threat; recommend periodic monitoring."
+            analyst_note = f"Observation scanned successfully. No anomalous low-backscatter damping slicks detected. Normal ambient marine capillary backscatter (mean: {sea_mean:.1f})."
         elif total_area_km2 < 5.0:
-            severity = "Moderate"
-            severity_tone = "orange"
+            severity = "Moderate Slick"
+            severity_tone = "blue"
             analyst_note = f"Identified {len(detected_slicks)} distinct slick body covering {total_area_km2} km² (perimeter: {total_perimeter_km} km). Dark SAR attenuation pattern is consistent with an active surface oil spill."
         elif total_area_km2 < 15.0:
             severity = "High Priority"
@@ -325,7 +301,8 @@ class OilSpillDetector:
             "pipeline_stages": pipeline_stages,
             "processed_overlay_image": self._cv2_to_base64_png(final_overlay),
             "heatmap_image": self._cv2_to_base64_png(heatmap_raw),
-            "detection_time_utc": now_utc,
+            "detection_time_ist": now_ist,
+            "detection_time_utc": now_ist,
             "timestamp_utc": datetime.now(timezone.utc).isoformat()
         }
 

@@ -359,18 +359,25 @@
       });
     });
 
-    // Handle "Load sample scene" button in-page
+    // Handle "Load sample scene" / "Run demo" buttons across the page
     const buttons = document.querySelectorAll("button");
     buttons.forEach((btn) => {
       if (btn.dataset.ogBound) return;
       const text = btn.textContent?.trim().toLowerCase();
-      if (text === "load sample scene") {
+      
+      if (
+        text === "load sample scene" || 
+        text === "run demo" || 
+        text === "run detection demo" ||
+        text?.includes("run demo") ||
+        text?.includes("sample scene")
+      ) {
         btn.dataset.ogBound = "true";
         btn.addEventListener("click", async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          injectFileStatusBar("OS-2026-014 Tanker Plume (Sentinel-1 C-SAR)", 0);
-          await runInPageScenario("tanker_spill");
+          // If on detection page, handle demo run
+          if (window.location.pathname.includes("/detection") || text.includes("demo") || text.includes("sample")) {
+            await runDynamicDemo();
+          }
         });
       } else if (text === "run detection") {
         btn.dataset.ogBound = "true";
@@ -382,7 +389,7 @@
             injectFileStatusBar(fileInput.files[0].name, fileInput.files[0].size / 1024);
             await processInPageUpload(fileInput.files[0]);
           } else {
-            openAiStudioModal();
+            await runDynamicDemo();
           }
         });
       }
@@ -391,6 +398,26 @@
 
   // Periodic observer to catch DOM changes on client-side routing
   setInterval(attachInPageDetectionHandlers, 600);
+
+  // Dynamic Demo Runner: Cycles through varied satellite scenarios with fresh results every click
+  async function runDynamicDemo() {
+    console.log("Triggering dynamic demo scenario with fresh unique results...");
+    animatePipelineProgression();
+
+    try {
+      const res = await fetch("/api/demo/next", {
+        method: "POST",
+      });
+      const data = await res.json();
+      const sceneName = data.scenario_info?.name || "Dynamic Satellite Scenario";
+      injectFileStatusBar(`${sceneName} (${data.scenario_info?.sensor || "SAR"})`, 0);
+      updateInPagePipeline(100, false, data.pipeline_stages);
+      updateInPageDetectionResults(sceneName, data);
+    } catch (err) {
+      console.error("Demo run error:", err);
+      await runInPageScenario("tanker_spill");
+    }
+  }
 
   // Process file upload directly for in-page UI with simulated step progression
   async function processInPageUpload(file) {
@@ -512,7 +539,7 @@
 
     const areaStr = data.spill_detected ? `${data.total_area_km2} km²` : "0.00 km²";
     const confStr = `${data.overall_confidence}%`;
-    const timeStr = data.detection_time_utc || new Date().toISOString().slice(11, 16) + " UTC";
+    const timeStr = data.detection_time_ist || data.detection_time_utc || (new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) + " IST");
     const riskStr = data.severity;
 
     updateMetricCards(areaStr, confStr, timeStr, riskStr);

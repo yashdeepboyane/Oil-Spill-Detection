@@ -6,7 +6,7 @@ and bounded chronology calculations.
 
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
@@ -39,6 +39,7 @@ app.add_middleware(
 
 # Initialize sample satellite scenes
 SAMPLE_SCENES = ensure_sample_scenes()
+demo_counter = 0
 
 
 # --- Models ---
@@ -101,6 +102,36 @@ def run_scenario(scenario_id: str, gsd_meters: float = 10.0, threshold: float = 
     return result
 
 
+@app.post("/api/demo/next", tags=["Scenarios"])
+def run_next_demo() -> Dict[str, Any]:
+    """
+    Every time this is called, it selects a different scenario with dynamic variance,
+    ensuring that every 'Run Demo' click yields a fresh, unique result.
+    """
+    global demo_counter
+    scenario_keys = list(SAMPLE_SCENES.keys())
+    selected_key = scenario_keys[demo_counter % len(scenario_keys)]
+    demo_counter += 1
+
+    scene = SAMPLE_SCENES[selected_key]
+    with open(scene["file"], "rb") as f:
+        image_bytes = f.read()
+
+    # Subtle realistic GSD variance per iteration
+    variance = round(0.92 + (demo_counter % 5) * 0.04, 2)
+    gsd_meters = round(10.0 * variance, 1)
+
+    result = detector.analyze_image(image_bytes, gsd_meters=gsd_meters, confidence_threshold=35.0)
+    result["scenario_info"] = {
+        "id": scene["id"],
+        "name": scene["name"],
+        "location": scene["location"],
+        "sensor": scene["sensor"]
+    }
+    result["demo_iteration"] = demo_counter
+    return result
+
+
 @app.post("/api/detect", tags=["Detection"])
 async def detect_oil_spill(
     file: UploadFile = File(...),
@@ -144,7 +175,6 @@ def calculate_spill_age(req: AgeingRequest) -> Dict[str, Any]:
     the Last-Known-Clear observation and First-Detection observation.
     """
     try:
-        # Parse ISO timestamps
         t_clear = datetime.fromisoformat(req.last_clear_utc.replace("Z", "+00:00"))
         t_detect = datetime.fromisoformat(req.first_detected_utc.replace("Z", "+00:00"))
         now = datetime.now(timezone.utc)
@@ -161,7 +191,6 @@ def calculate_spill_age(req: AgeingRequest) -> Dict[str, Any]:
     interval_hours = round(interval_sec / 3600.0, 2)
     interval_days = round(interval_hours / 24.0, 2)
 
-    # Current elapsed age bounds relative to NOW
     min_elapsed_hours = round((now - t_detect).total_seconds() / 3600.0, 2)
     max_elapsed_hours = round((now - t_clear).total_seconds() / 3600.0, 2)
 
@@ -196,7 +225,6 @@ def serve_favicon():
 @app.get("/{full_path:path}")
 def serve_spa(full_path: str):
     """Fallback handler to serve the Single Page App index.html for all frontend routes."""
-    # If the user requested a direct file in the root that exists
     local_file = os.path.join(BASE_DIR, full_path)
     if full_path and os.path.isfile(local_file):
         return FileResponse(local_file)
