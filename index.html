@@ -13,6 +13,18 @@
     <link rel="stylesheet" crossorigin href="/assets/style.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+      .leaflet-container {
+        background-color: #032b4d !important;
+      }
+      .og-deep-blue-tiles {
+        filter: brightness(0.92) contrast(1.15) saturate(1.4) hue-rotate(-5deg);
+      }
+      .leaflet-popup-content-wrapper {
+        border-radius: 12px;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

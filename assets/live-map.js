@@ -2,14 +2,14 @@
  * OceanGuard Live Marine Satellite & AIS Navigation Map
  * Replaces the schematic view with a real, live, interactive Leaflet ocean & marine map.
  * Includes:
- * - Real Ocean Nautical Basemap (Esri World Ocean Base) with bathymetric blue water, depth contours & marine topography
- * - Dark Nautical & Satellite Ocean basemaps
+ * - Rich Deep Blue Ocean & Marine Nautical Basemap
+ * - Indian Standard Time (IST / ISI) clock and telemetry timestamps
  * - Deep offshore ocean coordinates (Bay of Bengal / Maritime Sector, 80 km offshore)
  * - Live pulsating Oil Spill Polygon (OS-2026-014, 12.6 km²)
  * - Live drifting AIS vessels (MV Ocean Star, Pacific Fern, Meridian Crest) with telemetry popups
  * - Real-time wind & ocean current vector overlays
  * - Maximize / Fullscreen feature to expand the map along the full screen
- * - Real-time coordinate tracker and live UTC clock
+ * - Real-time coordinate tracker and live IST clock
  */
 
 (function () {
@@ -26,14 +26,20 @@
   const CENTER_LAT = 13.15;
   const CENTER_LNG = 81.15;
 
+  function getFormattedIST(timeStr) {
+    if (timeStr) return timeStr;
+    const d = new Date();
+    return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) + " IST";
+  }
+
   const SPILL_GEOJSON = {
     type: "Feature",
     properties: {
       id: "OS-2026-014",
-      name: "Crude Oil Spill Plume (Offshore)",
+      name: "Crude Oil Spill Plume (Offshore Marine Zone)",
       area_km2: 12.6,
       confidence: 94,
-      detected_utc: "14:32 UTC",
+      detected_time: "14:32 IST",
       severity: "High Priority",
     },
     geometry: {
@@ -128,22 +134,23 @@
       return;
     }
 
-    console.log("Upgrading demonstrative schematic to LIVE interactive ocean map...");
+    console.log("Upgrading demonstrative schematic to LIVE interactive deep blue ocean map...");
     mapContainer.dataset.ogLiveMapActive = "true";
     mapContainer.innerHTML = ""; // Clear schematic placeholder
 
-    // Build the Live Map Wrapper
+    // Build the Live Map Wrapper with deep ocean blue background
     mapContainer.style.position = "relative";
     mapContainer.style.minHeight = "480px";
     mapContainer.style.height = "100%";
     mapContainer.style.overflow = "hidden";
     mapContainer.style.borderRadius = "16px";
-    mapContainer.style.background = "#031525";
-    mapContainer.style.border = "1px solid #1e3a5f";
+    mapContainer.style.background = "linear-gradient(180deg, #02182b 0%, #032b4d 50%, #011627 100%)";
+    mapContainer.style.border = "1px solid #0369a1";
+    mapContainer.style.boxShadow = "0 8px 32px rgba(2, 44, 77, 0.4)";
 
     const mapDiv = document.createElement("div");
     mapDiv.id = "og-live-leaflet-map";
-    mapDiv.style.cssText = "width: 100%; height: 100%; min-height: 480px; z-index: 1;";
+    mapDiv.style.cssText = "width: 100%; height: 100%; min-height: 480px; z-index: 1; background: #032b4d;";
     mapContainer.appendChild(mapDiv);
 
     // Create Leaflet Map Instance
@@ -155,13 +162,16 @@
     });
 
     // Basemap tile layers:
-    // 1. Esri Ocean Basemap (Realistic blue sea bathymetry & marine topography)
+    // 1. Deep Blue Ocean Basemap (Rich Marine Sea Color)
     const esriOcean = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_OceanBase/MapServer/tile/{z}/{y}/{x}",
-      { maxZoom: 13, attribution: "Esri Ocean Basemap" }
+      { 
+        maxZoom: 13,
+        className: "og-deep-blue-tiles"
+      }
     );
 
-    // 2. Dark Nautical Radar View
+    // 2. Dark Marine Radar View
     const cartoDark = L.tileLayer(
       "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
       { maxZoom: 19 }
@@ -173,7 +183,7 @@
       { maxZoom: 18 }
     );
 
-    // Set Ocean Basemap as the default view
+    // Set Deep Blue Ocean Basemap as the default view
     esriOcean.addTo(activeMap);
 
     mapLayers.ocean = esriOcean;
@@ -203,22 +213,22 @@
         color: "#ef4444",
         weight: 3,
         opacity: 0.95,
-        fillColor: "#ef4444",
-        fillOpacity: 0.45,
+        fillColor: "#dc2626",
+        fillOpacity: 0.5,
         dashArray: "6, 6",
       },
       onEachFeature: (feature, layer) => {
         layer.bindPopup(`
-          <div style="font-family: Inter, sans-serif; color: #0f172a; padding: 4px; min-width: 200px;">
-            <div style="font-size: 10px; font-weight: 800; color: #dc2626; text-transform: uppercase;">Active Offshore Spill Target</div>
-            <div style="font-size: 14px; font-weight: 800; margin: 2px 0;">${feature.properties.id}</div>
+          <div style="font-family: Inter, sans-serif; color: #0f172a; padding: 4px; min-width: 210px;">
+            <div style="font-size: 10px; font-weight: 800; color: #dc2626; text-transform: uppercase; letter-spacing: 0.5px;">Active Offshore Spill Target</div>
+            <div style="font-size: 14px; font-weight: 800; margin: 3px 0; color: #0f172a;">${feature.properties.id}</div>
             <div style="font-size: 11px; color: #475569; margin-bottom: 6px;">${feature.properties.name}</div>
-            <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 6px; padding: 6px 8px; font-size: 11px; font-family: monospace;">
+            <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 8px; padding: 8px 10px; font-size: 11px; font-family: monospace; line-height: 1.6;">
               Area: <b>${feature.properties.area_km2} km²</b><br>
               Confidence: <b>${feature.properties.confidence}%</b><br>
-              Detected: <b>${feature.properties.detected_utc}</b><br>
+              Detected Time: <b>${feature.properties.detected_time}</b><br>
               Severity: <b style="color:#b91c1c;">${feature.properties.severity}</b><br>
-              Zone: <b>Deep Offshore Sea (80km)</b>
+              Environment: <b style="color:#0284c7;">Deep Blue Sea (80km offshore)</b>
             </div>
           </div>
         `);
@@ -227,19 +237,19 @@
 
     // Add glowing marker on spill center
     const spillMarkerHtml = `
-      <div style="position:relative;width:24px;height:24px;display:flex;align-items:center;justify-content:center;">
-        <span style="position:absolute;width:100%;height:100%;border-radius:50%;background:#ef4444;opacity:0.4;animation:ping 2s cubic-bezier(0,0,0.2,1) infinite;"></span>
-        <span style="position:relative;width:12px;height:12px;border-radius:50%;background:#ef4444;border:2px solid white;box-shadow:0 0 10px #ef4444;"></span>
+      <div style="position:relative;width:26px;height:26px;display:flex;align-items:center;justify-content:center;">
+        <span style="position:absolute;width:100%;height:100%;border-radius:50%;background:#ef4444;opacity:0.5;animation:ping 2s cubic-bezier(0,0,0.2,1) infinite;"></span>
+        <span style="position:relative;width:12px;height:12px;border-radius:50%;background:#ef4444;border:2px solid white;box-shadow:0 0 12px #ef4444;"></span>
       </div>
     `;
     const spillIcon = L.divIcon({
       html: spillMarkerHtml,
       className: "og-spill-pulse",
-      iconSize: [24, 24],
-      iconAnchor: [12, 12],
+      iconSize: [26, 26],
+      iconAnchor: [13, 13],
     });
     L.marker([CENTER_LAT, CENTER_LNG], { icon: spillIcon })
-      .bindTooltip("<b>OS-2026-014</b> · 12.6 km² Offshore Spill", {
+      .bindTooltip("<b>OS-2026-014</b> · 12.6 km² Spill · 14:32 IST", {
         permanent: true,
         direction: "top",
         className: "og-spill-tooltip",
@@ -260,15 +270,15 @@
             display: flex; 
             align-items: center; 
             justify-content: center; 
-            color: #092747; 
+            color: #032b4d; 
             border: 2px solid white;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
             transform: rotate(${vessel.heading_deg}deg);
             transition: all 0.5s ease;
           ">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 19 21 12 17 5 21 12 2"></polygon></svg>
           </div>
-          <span style="background: rgba(9,37,68,0.85); color: #f8fafc; font-size: 9px; font-family: monospace; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2); white-space: nowrap;">
+          <span style="background: rgba(3, 43, 77, 0.92); color: #f8fafc; font-size: 9px; font-family: monospace; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.4); white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,0.3);">
             ${vessel.name}
           </span>
         </div>
@@ -283,15 +293,16 @@
 
       const marker = L.marker([vessel.lat, vessel.lng], { icon: icon }).addTo(map);
       marker.bindPopup(`
-        <div style="font-family: Inter, sans-serif; color: #0f172a; padding: 4px; min-width: 180px;">
-          <div style="font-size: 9px; font-weight: 800; color: #0284c7; text-transform: uppercase;">AIS Live Telemetry</div>
+        <div style="font-family: Inter, sans-serif; color: #0f172a; padding: 4px; min-width: 190px;">
+          <div style="font-size: 9px; font-weight: 800; color: #0284c7; text-transform: uppercase;">AIS Live Ocean Telemetry</div>
           <div style="font-size: 13px; font-weight: 800; margin: 2px 0;">${vessel.name}</div>
           <div style="font-size: 11px; color: #64748b; margin-bottom: 6px;">${vessel.type} (${vessel.flag})</div>
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 8px; font-size: 10px; font-family: monospace;">
+          <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; padding: 6px 8px; font-size: 10px; font-family: monospace; line-height: 1.5;">
             MMSI: <b>${vessel.mmsi}</b><br>
             Speed: <b>${vessel.speed_kn} kn</b><br>
             Heading: <b>${vessel.heading_deg}°</b><br>
-            Position: <b>${vessel.lat.toFixed(3)}°N, ${vessel.lng.toFixed(3)}°E</b>
+            Position: <b>${vessel.lat.toFixed(3)}°N, ${vessel.lng.toFixed(3)}°E</b><br>
+            Status: <b style="color:#0284c7;">Underway Using Engine</b>
           </div>
         </div>
       `);
@@ -308,8 +319,8 @@
     VESSELS.forEach((v) => {
       L.polyline(v.trajectory, {
         color: v.color,
-        weight: 2,
-        opacity: 0.6,
+        weight: 2.5,
+        opacity: 0.7,
         dashArray: "4, 6",
       }).addTo(map);
     });
@@ -324,21 +335,21 @@
         [13.13, 81.19],
       ],
       {
-        color: "#10b981",
-        weight: 3,
-        opacity: 0.85,
+        color: "#38bdf8",
+        weight: 3.5,
+        opacity: 0.9,
       }
     ).addTo(map);
-    currentLine.bindTooltip("🌊 Ocean Current: 0.8 kn SE", { sticky: true });
+    currentLine.bindTooltip("🌊 Ocean Surface Drift: 0.8 kn SE", { sticky: true });
 
-    // Risk Buffer Circle in deep sea
+    // Risk Buffer Circle in deep blue sea
     L.circle([CENTER_LAT, CENTER_LNG], {
       radius: 8000,
-      color: "#fb923c",
-      weight: 1.5,
-      opacity: 0.5,
+      color: "#0284c7",
+      weight: 2,
+      opacity: 0.6,
       fillColor: "#0284c7",
-      fillOpacity: 0.08,
+      fillOpacity: 0.12,
       dashArray: "6, 8",
     }).addTo(map);
   }
@@ -372,24 +383,24 @@
     controlsDiv.innerHTML = `
       <!-- Top HUD Header -->
       <div style="position: absolute; top: 12px; left: 12px; right: 12px; display: flex; align-items: center; justify-content: space-between; pointer-events: auto;">
-        <div style="display: flex; align-items: center; gap: 8px; background: rgba(6,29,55,0.92); backdrop-filter: blur(8px); padding: 6px 12px; border-radius: 10px; border: 1px solid rgba(56,189,248,0.3); color: white; font-family: monospace; font-size: 11px;">
-          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 8px #10b981;animation:pulse 2s infinite;"></span>
-          <span style="font-weight: 800; color: #38bdf8; text-transform: uppercase;">LIVE MARINE OCEAN MAP</span>
-          <span style="color: #94a3b8;">|</span>
-          <span id="og-map-utc-clock" style="color: #f8fafc;">--:--:-- UTC</span>
+        <div style="display: flex; align-items: center; gap: 8px; background: rgba(3, 37, 65, 0.94); backdrop-filter: blur(8px); padding: 6px 14px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.4); color: white; font-family: monospace; font-size: 11px; box-shadow: 0 4px 14px rgba(0,0,0,0.3);">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#38bdf8;box-shadow:0 0 8px #38bdf8;animation:pulse 2s infinite;"></span>
+          <span style="font-weight: 800; color: #38bdf8; text-transform: uppercase;">🌊 LIVE BLUE OCEAN MAP</span>
+          <span style="color: #64748b;">|</span>
+          <span id="og-map-ist-clock" style="color: #f8fafc; font-weight: 700;">--:--:-- IST</span>
         </div>
 
         <!-- Top Right Control Buttons -->
         <div style="display: flex; align-items: center; gap: 8px;">
           <!-- Basemap Switcher -->
-          <div style="background: rgba(6,29,55,0.92); backdrop-filter: blur(8px); padding: 4px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.15); display: flex; gap: 4px;">
-            <button id="og-btn-ocean" style="background: #0284c7; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🌊 Sea / Ocean</button>
+          <div style="background: rgba(3, 37, 65, 0.94); backdrop-filter: blur(8px); padding: 4px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.3); display: flex; gap: 4px;">
+            <button id="og-btn-ocean" style="background: #0284c7; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🌊 Blue Ocean</button>
             <button id="og-btn-dark" style="background: transparent; color: #94a3b8; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🌑 Nautical Dark</button>
             <button id="og-btn-satellite" style="background: transparent; color: #94a3b8; border: none; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer;">🛰️ Satellite</button>
           </div>
 
           <!-- Re-center button -->
-          <button id="og-btn-recenter" style="background: rgba(6,29,55,0.92); backdrop-filter: blur(8px); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); padding: 6px 10px; border-radius: 10px; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 4px;" title="Center on Spill Incident">
+          <button id="og-btn-recenter" style="background: rgba(3, 37, 65, 0.94); backdrop-filter: blur(8px); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 6px 12px; border-radius: 10px; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 4px;" title="Center on Spill Incident">
             <span>🎯</span>
             <span class="hidden sm:inline">Target Spill</span>
           </button>
@@ -398,7 +409,7 @@
           <button id="og-btn-maximize" style="
             background: #0284c7; 
             color: white; 
-            border: 1px solid rgba(255,255,255,0.25); 
+            border: 1px solid rgba(255,255,255,0.3); 
             padding: 6px 14px; 
             border-radius: 10px; 
             font-size: 11px; 
@@ -407,7 +418,7 @@
             display: flex; 
             align-items: center; 
             gap: 6px;
-            box-shadow: 0 4px 14px rgba(2,132,199,0.4);
+            box-shadow: 0 4px 14px rgba(2,132,199,0.5);
             transition: all 0.2s ease;
           ">
             <span id="og-max-icon" style="font-size: 14px;">⛶</span>
@@ -417,29 +428,36 @@
       </div>
 
       <!-- Bottom Bar: Coordinates, Telemetry & Zoom -->
-      <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(5,22,38,0.92); backdrop-filter: blur(10px); border-top: 1px solid rgba(255,255,255,0.1); padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-family: monospace; font-size: 10px; color: #94a3b8; pointer-events: auto;">
+      <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(2, 27, 49, 0.95); backdrop-filter: blur(10px); border-top: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-family: monospace; font-size: 10px; color: #94a3b8; pointer-events: auto;">
         <div style="display: flex; align-items: center; gap: 14px;">
-          <span style="color: #38bdf8; font-weight: 700;">🌊 DEEP SEA AIS / SAR FEED</span>
+          <span style="color: #38bdf8; font-weight: 700;">🌊 DEEP BLUE SEA AIS / SAR FEED</span>
           <span id="og-cursor-coords">13.150° N · 81.150° E</span>
           <span style="color: #64748b;">|</span>
-          <span style="color: #10b981;">3 Vessels Active</span>
+          <span style="color: #38bdf8;">3 Vessels Active</span>
           <span style="color: #ef4444; font-weight: 700;">1 Active Spill (OS-2026-014)</span>
         </div>
 
         <div style="display: flex; align-items: center; gap: 10px;">
-          <button id="og-zoom-in" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: white; width: 22px; height: 22px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: 800;">+</button>
-          <button id="og-zoom-out" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: white; width: 22px; height: 22px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: 800;">-</button>
+          <button id="og-zoom-in" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: white; width: 22px; height: 22px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: 800;">+</button>
+          <button id="og-zoom-out" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: white; width: 22px; height: 22px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: 800;">-</button>
         </div>
       </div>
     `;
 
     container.appendChild(controlsDiv);
 
-    // Live Clock
+    // Live Indian Standard Time (IST / ISI) Clock
     setInterval(() => {
-      const clockEl = document.getElementById("og-map-utc-clock");
+      const clockEl = document.getElementById("og-map-ist-clock");
       if (clockEl) {
-        clockEl.textContent = new Date().toISOString().slice(11, 19) + " UTC";
+        const istTime = new Date().toLocaleTimeString("en-IN", {
+          timeZone: "Asia/Kolkata",
+          hour12: false,
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+        clockEl.textContent = `${istTime} IST`;
       }
     }, 1000);
 
